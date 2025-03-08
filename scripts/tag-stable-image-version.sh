@@ -6,33 +6,24 @@ set -e
 
 if [ -z "$1" ]; then
   echo "Error: Missing image-name"
-  echo "Usage: $0 <image-name> [sha-version]"
-  echo "       If sha-version is not provided, 'latest' will be used"
+  echo "Usage: $0 <image-name> <sha-version>"
   exit 1
 fi
 IMAGE_NAME="ghcr.io/aident-ai/$1"
-
-# Set SHA_VERSION to "latest" if not provided
 if [ -z "$2" ]; then
-  SHA_VERSION="latest"
-  echo "No sha-version provided, using 'latest' tag"
-else
-  SHA_VERSION="$2"
+  echo "Error: Missing sha-version tag"
+  echo "Usage: $0 <image-name> <sha-version>"
+  exit 1
 fi
+SHA_VERSION="$2"
 
 IMAGE_WITH_TAG="$IMAGE_NAME:$SHA_VERSION"
-echo "Processing multi-architecture image: $IMAGE_WITH_TAG"
-
-# Inspect the multi-architecture image to verify it exists
-echo "Inspecting image: $IMAGE_WITH_TAG"
-docker buildx imagetools inspect "$IMAGE_WITH_TAG"
-
-# Tag the multi-architecture image as stable using buildx imagetools
+echo "Processing image: $IMAGE_WITH_TAG"
+echo "Pulling image: $IMAGE_WITH_TAG"
+docker pull "$IMAGE_WITH_TAG"
 echo "Tagging $IMAGE_WITH_TAG as stable"
-docker buildx imagetools create --tag "$IMAGE_NAME:stable" "$IMAGE_WITH_TAG"
+docker tag "$IMAGE_WITH_TAG" "$IMAGE_NAME:stable"
+echo "Pushing $IMAGE_NAME:stable"
+docker push "$IMAGE_NAME:stable"
 
-# Verify the tagging was successful
-echo "Verifying stable tag..."
-docker buildx imagetools inspect "$IMAGE_NAME:stable"
-
-echo "Successfully tagged multi-architecture image $IMAGE_WITH_TAG as $IMAGE_NAME:stable"
+echo "Successfully tagged and pushed $IMAGE_WITH_TAG as $IMAGE_NAME:stable"

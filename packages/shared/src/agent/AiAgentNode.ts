@@ -56,10 +56,8 @@ export const ThinkAndPlanToolConfigs = {
 export const ThinkAndPlanTool = tool(ThinkAndPlanToolConfigs);
 
 export const isFinishRunTool = (name: string) =>
-  name === DefaultAiFinishRunToolName || name === DefaultAiFinishRunToolName.replaceAll('-', '_');
-export const isThinkAndPlanTool = (name: string) =>
-  name === ThinkAndPlanToolName || name === ThinkAndPlanToolName.replaceAll('-', '_');
-export const isRenderTextTool = (name: string) => isFinishRunTool(name) || isThinkAndPlanTool(name);
+  name === DefaultAiFinishRunToolName || name === DefaultAiFinishRunToolName.replace('-', '_');
+export const isRenderTextTool = (name: string) => isFinishRunTool(name) || name === ThinkAndPlanToolName;
 
 export class AiAgentNode implements IBaseAgentNode<CoreMessage, LanguageModel, CoreTool, ToolInvocation> {
   // main loop
@@ -157,7 +155,7 @@ export class AiAgentNode implements IBaseAgentNode<CoreMessage, LanguageModel, C
 
                 if (
                   stepCount === 0 ||
-                  lastStepMessages.some((m) => m.role === 'tool' && !isThinkAndPlanTool(m.content[0].toolName))
+                  lastStepMessages.some((m) => m.role === 'tool' && m.content[0].toolName !== ThinkAndPlanToolName)
                 ) {
                   // Keep only the ThinkAndPlan tool
                   localToolDict = { [ThinkAndPlanToolName]: localToolDict[ThinkAndPlanToolName] };
@@ -413,7 +411,7 @@ export class AiAgentNode implements IBaseAgentNode<CoreMessage, LanguageModel, C
     this.state = options.state ?? {
       chatHistory: options.chatHistory,
       inputMessages: options.inputMessages,
-      maxSteps: options.maxSteps || DEFAULT_MAX_STEPS,
+      maxSteps: options.maxSteps ?? DEFAULT_MAX_STEPS,
       runResult: undefined,
       stepCount: 0,
       stepEnvStateHistory: [],
@@ -435,7 +433,7 @@ export class AiAgentNode implements IBaseAgentNode<CoreMessage, LanguageModel, C
     );
     if (!this.toolDict[DefaultAiFinishRunToolName]) this.toolDict[DefaultAiFinishRunToolName] = DefaultAiFinishRunTool;
 
-    this.stepRunHistoryType = options.stepRunHistoryType || StepRunHistoryType.COMPLETE;
+    this.stepRunHistoryType = options.stepRunHistoryType ?? StepRunHistoryType.COMPLETE;
     this.dataStream = options.dataStream;
     this.abortSignal = options.abortSignal;
     this.inspectionConfig = options.inspectionConfig;

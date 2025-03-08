@@ -1,11 +1,10 @@
 #!/bin/bash
-
-# Check arguments
-source ./scripts/detect-quick-command-args.sh
-eval "$(detect_command_args "$@")" || exit 1
+set -e # Exit on error
+source ./scripts/detect_docker_compose.sh
+DOCKER_COMPOSE_CMD=$(detect_docker_compose) || exit 1
 
 echo "========================================"
-bash quick-stop.sh $DOCKER_CONTEXT
+bash quick-stop.sh
 
 echo "========================================"
 echo "Resetting Supabase services..."

@@ -1,24 +1,8 @@
 <img src="./apps/web/public/assets/icons/open-cuak-logo.png" alt="Open CUAK Logo">
 
-<p align="center">
-  <a href="https://aident.ai/cloud">Aident Cloud</a> ·
-  <a href="https://docs.aident.ai/docs/get-started">Host locally</a> ·
-  <a href="https://docs.aident.ai/">Documentation</a>
-</p>
+<h1 align="center">🤖 - Reliable Automation Agents at Scale - 👥</h1>
 
-<p align="center">
-    <img src="https://img.shields.io/github/stars/Aident-AI/open-cuak">
-    <a href="https://discord.gg/SHT4etYuX2" target="_blank">
-        <img src="https://img.shields.io/discord/1129411337727000606?logo=discord&labelColor=%20%235462eb&logoColor=%20%23f5f5f5"
-            alt="Chat on Discord"></a>
-    <a href="https://twitter.com/intent/follow?screen_name=Aident_AI" target="_blank">
-        <img src="https://img.shields.io/twitter/follow/Aident_AI?logo=X"
-            alt="Follow on X"></a>
-</p>
-
-<h1 align="center">🤖 - Free OpenAI Operator alternative - 👥</h1>
-
-Open CUA Kit (Computer Use Agent), or Open-CUAK (pronounced "quack" 🦆🗣️), is THE platform for teaching, hiring and managing automation agents at scale — starting with browsers.
+Open CUA Kit (Computer Use Agent), or Open-CUAK (pronounced "quack" 🦆🗣️), is THE platform for managing automation agents at scale — starting with browsers. The Kubernetes for CUA agents.
 
 ### 🎯 Why Open-CUAK?
 
@@ -44,44 +28,36 @@ _Read more in our [launch blog](https://aident.ai/blog/openai-operator-open-sour
 
 ## Quick Start
 
-### 👉 Start Local Production Build
+### 🛠️ Environment Setup
 
-0. (optional) Make sure you have [`brew`](https://brew.sh/) for package management
+1.  Make sure you have `docker` installed on your machine. You can download it from [here](https://www.docker.com/products/docker-desktop).
+2.  Make sure you have `docker-compose` installed as well. Install from [here](https://docs.docker.com/compose/install/).
+3.  Clone the repository and navigate to the root directory.
 
-   > works on Mac and Linux. For Windows, use WSL2 for now.
+    ```bash
+    git clone https://github.com/Aident-AI/open-cuak.git
+    cd open-cuak
+    ```
 
-   ```bash
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+### 👉 Run Production Build
 
-   # (optional) on Linux, if `brew` command is not available in terminal, use this to register `brew`
-   test -d ~/.linuxbrew && eval "$(~/.linuxbrew/bin/brew shellenv)"
-   test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-   echo "eval \"\$($(brew --prefix)/bin/brew shellenv)\"" >> ~/.bashrc
-
-   # (optional) verify the successful installation of `brew`
-   brew doctor
-   ```
-
-1. Install Open-CUAK package
+1. Set OpenAI API Key in `.example.env` file. (You can also set that in `.env.production` after Step 2)
 
    ```bash
-   brew install Aident-AI/homebrew-tap/open-cuak
-
-   # or use this to update to the latest version
-   brew update && brew upgrade Aident-AI/homebrew-tap/open-cuak
+   # [Required] Please add your OpenAI key
+   OPENAI_API_KEY="your-openai-api-key-here"
    ```
 
-2. Start Open-CUAK services
+2. Start the services (at repo root).
 
-   > downloading images can take a while (Sorry! We will optimize this soon.)
+   ```bash
+   bash quick-start.sh
 
+   # or (if you have `npm` installed)
+   npm run quick:start
    ```
-   open-cuak start
-   ```
 
-3. Ta-da! It is now ready locally at [http://localhost:11970](http://localhost:11970).
-
-   > Don't forget to go to the ⚙️ Configurations page to set your OpenAI or other major model API key to chat with Aiden!
+3. Ta-da! It is now ready locally at [http://localhost:3000](http://localhost:3000).
 
 <p align="center">&nbsp;</p>
 
