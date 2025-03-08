@@ -6,6 +6,7 @@ import { ALogger } from '~shared/logging/ALogger';
 import { ServiceWorkerMessageAction } from '~shared/messaging/service-worker/ServiceWorkerMessageAction';
 import { RuntimeMessage, RuntimeMessageResponse } from '~shared/messaging/types';
 import { SupabaseClientForServer } from '~shared/supabase/client/SupabaseClientForServer';
+import { UserConfig, UserConfigData } from '~shared/user-config/UserConfig';
 import { getRequestContext } from '~src/_logging/RequestContext';
 import { RemoteExtensionService } from '~src/app/api/extension/RemoteExtensionService';
 
@@ -33,7 +34,7 @@ export class ApiRequestContextService {
   public static initWithSupabaseClient(options: ApiRequestContextInitOptions): ApiRequestContext {
     this.reset();
 
-    const requestId = options.req?.headers.get('x-request-id') ?? options.requestId;
+    const requestId = options.req?.headers.get('x-request-id') || options.requestId;
     if (!requestId) throw new Error('Request ID not found in init.');
 
     this.#supabase = options.supabase;
@@ -82,11 +83,16 @@ export class ApiRequestContextService {
         if (!user) throw new Error('User not logged in.'); // TODO: better error handling with error code (e.g. 401)
         return user;
       },
+      fetchUserConfig: async (): Promise<UserConfigData> => {
+        const user = await this.getContext().fetchUserOrThrow();
+        const supabase = this.getContext().getSupabase();
+        return await UserConfig.genFetch(user.id, supabase);
+      },
       getBoss: (): PgBoss => {
         if (!process.env.PG_CONNECTION) throw new Error('PG_CONNECTION not set.');
         return new PgBoss({ connectionString: process.env.PG_CONNECTION, application_name: 'web-api', max: 1 });
       },
-      getExecSessionId: (): string | undefined => options.execSessionIdOverride ?? getRequestContext().execSessionId,
+      getExecSessionId: (): string | undefined => options.execSessionIdOverride || getRequestContext().execSessionId,
       getRemoteBrowserSessionId: () => getRequestContext().remoteBrowserSessionId,
       getRequestId: () => requestId,
       getSupabase: () => {

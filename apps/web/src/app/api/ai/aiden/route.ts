@@ -5,7 +5,7 @@ import { AiAidenSystemPromptVersion } from '~shared/agent/AiAidenSystemPrompts';
 import { StepRunHistoryType } from '~shared/agent/IBaseAgentNodeOptions';
 import { AiAgentNodeBuilder } from '~shared/agent/builders/AiAgentNodeBuilder';
 import { AiAgentSOPNodeBuilder } from '~shared/agent/builders/AiAgentSOPNodeBuilder';
-import { GPTVariant, ModelRouter, RouterModelConfig } from '~shared/llm/ModelRouter';
+import { ModelRouter } from '~shared/llm/ModelRouter';
 import { ALogger } from '~shared/logging/ALogger';
 import { AiAgentSOP, AiAgentSOPSchema } from '~shared/sop/AiAgentSOP';
 import { AiAidenApi, AiAidenStreamDataSchema, AiAidenStreamStateInfoSchema } from '~src/app/api/ai/aiden/AiAidenApi';
@@ -22,25 +22,18 @@ export const POST = simpleRequestWrapper<z.infer<typeof api.RequestSchema.schema
   api.RequestSchema.schema,
   { assertUserLoggedIn: true, skipResponseParsing: true },
   async (request, context, _path, signal) => {
-    const user = await context.fetchUserOrThrow();
+    const [user, userConfig] = await Promise.all([context.fetchUserOrThrow(), context.fetchUserConfig()]);
 
-    const modelConfig = { variant: GPTVariant.GPT_4O } as RouterModelConfig;
+    const model = ModelRouter.getModelFromUserConfigOrThrow(userConfig);
     const systemPromptVersion = AiAidenSystemPromptVersion.LIVE;
     const useReAct = true;
-    let model;
-    try {
-      model = await ModelRouter.genModel(modelConfig);
-    } catch (error) {
-      ALogger.error({ context: 'genModel', error });
-      return new Response(JSON.stringify({ message: 'Failed to generate model', error }), { status: 500 });
-    }
 
     // prepare core configs
     const remoteBrowserSessionId = context.getRemoteBrowserSessionId();
     const sendRuntimeMessage = context.sendRuntimeMessage;
     const connectedConfig = { remoteBrowserSessionId, sendRuntimeMessage };
     const coreConfig = {
-      baseMaxSteps: request.maxSteps ?? DEFAULT_MAX_STEPS,
+      baseMaxSteps: request.maxSteps || DEFAULT_MAX_STEPS,
       isBenchmark: request.isBenchmark ?? false,
       isClaude: ModelRouter.isClaude(model),
       remoteBrowserConnected: await AiAidenCore.genTestRemoteBrowserConnection(connectedConfig),
@@ -65,7 +58,7 @@ export const POST = simpleRequestWrapper<z.infer<typeof api.RequestSchema.schema
     return createDataStreamResponse({
       execute: async (dataStream) => {
         const maxStepMultiplier = coreConfig.isBenchmark && coreConfig.useReAct ? 2 : 1; // For ReAct, there is always a think step before an execution step
-        const maxSteps = (request.maxSteps ?? DEFAULT_MAX_STEPS) * maxStepMultiplier;
+        const maxSteps = (request.maxSteps || DEFAULT_MAX_STEPS) * maxStepMultiplier;
 
         const core = new AiAidenCoreInstance();
         const fetchStepState = async () => {
@@ -113,7 +106,7 @@ export const POST = simpleRequestWrapper<z.infer<typeof api.RequestSchema.schema
 
         ALogger.info({ context: '/api/llm/agent', result });
         if (!result.success) {
-          const newData = AiAidenStreamDataSchema.parse({ type: 'error', error: result.error ?? 'Unknown error' });
+          const newData = AiAidenStreamDataSchema.parse({ type: 'error', error: result.error || 'Unknown error' });
           dataStream.writeData(newData);
         }
       },

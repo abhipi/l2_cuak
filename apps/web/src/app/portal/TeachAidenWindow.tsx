@@ -1,20 +1,38 @@
 'use client';
 
-import { ChevronLeftIcon, PencilSquareIcon, PlayCircleIcon, StopCircleIcon } from '@heroicons/react/24/solid';
-import { Message, ToolInvocation, convertToCoreMessages } from 'ai';
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  ChevronLeftIcon,
+  PencilSquareIcon,
+  PlayCircleIcon,
+  StopCircleIcon,
+} from '@heroicons/react/24/solid';
+import { Message, ToolInvocation } from 'ai';
+import { useChat } from 'ai/react';
 import { round } from 'lodash';
 import { useContext, useEffect, useRef, useState } from 'react';
 import { v4 as UUID } from 'uuid';
+import { z } from 'zod';
 import { getHost } from '~shared/env/environment';
 import { X_REMOTE_BROWSER_SESSION_ID_HEADER } from '~shared/http/headers';
 import { RuntimeMessageReceiver } from '~shared/messaging/RuntimeMessageReceiver';
 import { MouseClick_ActionConfig } from '~shared/messaging/action-configs/control-actions/MouseClick.ActionConfig';
 import { MouseWheel_ActionConfig } from '~shared/messaging/action-configs/control-actions/MouseWheel.ActionConfig';
+import { Screenshot_ActionConfig } from '~shared/messaging/action-configs/page-actions/Screenshot.ActionConfig';
+import { PageNavigationAction } from '~shared/messaging/action-configs/page-actions/types';
 import { PortalMouseControl_ActionConfig } from '~shared/messaging/action-configs/portal-actions/PortalMouseControl.ActionConfig';
 import { ServiceWorkerMessageAction } from '~shared/messaging/service-worker/ServiceWorkerMessageAction';
 import { ShadowModeWorkflowEnvironment } from '~shared/shadow-mode/ShadowModeWorkflowEnvironment';
-import { WaitUtils } from '~shared/utils/WaitUtils';
-import { AiAidenApiMessageAnnotation } from '~src/app/api/ai/aiden/AiAidenApi';
+import { AiAidenApiMessageAnnotation, AiAidenStreamDataSchema } from '~src/app/api/ai/aiden/AiAidenApi';
+import {
+  KeyboardEvent,
+  MouseClickEvent,
+  MouseMoveEvent,
+  MouseScrollEvent,
+  ProcessedEventBase,
+} from '~src/app/portal/TeachAidenEvent';
+import { TeachAidenData } from '~src/app/portal/TeachAidentData';
 import { AiMessageTeachModeInput } from '~src/components/chat-box/AiMessageTeachModeInput';
 import AiMessagesForChatBox from '~src/components/chat-box/AiMessagesForChatBox';
 import { ScrollToBottomButton } from '~src/components/chat-box/ScrollToBottomButton';
@@ -26,20 +44,31 @@ interface Props {
   remoteBrowserSessionId?: string;
 }
 
-type ProcessedEventBase = { type: 'move' | 'click' | 'scroll' | 'key'; ts: number };
-type Position = { x: number; y: number };
+const REFRESH_INTERVAL_IN_MS = 1000;
 
-type MouseMoveEvent = ProcessedEventBase & { type: 'move'; from: Position; to: Position };
-type MouseClickEvent = ProcessedEventBase & { type: 'click'; position: Position };
-type MouseScrollEvent = ProcessedEventBase & { type: 'scroll'; distance: { deltaX: number; deltaY: number } };
-type KeyboardEvent = ProcessedEventBase & { type: 'key'; key: string };
+const handleThrottledEvent = <T extends ProcessedEventBase>(
+  events: T[],
+  newEvent: Omit<T, 'type'> & { type: T['type'] },
+  updateLastEvent?: (lastEvent: T, newEvent: T) => void,
+) => {
+  if (events.length < 1) {
+    events.push(newEvent as T);
+  } else {
+    const lastEvent = events[events.length - 1];
+    if (updateLastEvent) {
+      updateLastEvent(lastEvent, newEvent as T);
+    }
+    if (newEvent.ts - lastEvent.ts >= REFRESH_INTERVAL_IN_MS) {
+      events.push(newEvent as T);
+    }
+  }
+};
 
-const REFRESH_INTERVAL_IN_MS = 350;
-const REVERSE_SHADOW_STEP_DELAY = 350;
-
-enum AidenState {
+export enum AidenState {
   IDLE = 'idle',
   SHADOWING = 'shadowing',
+  SOP_GENERATING = 'sop-generating',
+  SOP_GENERATED = 'sop-generated',
   REVERSE_SHADOWING = 'reverse-shadowing',
   REVIEWED = 'reviewed',
 }
@@ -53,18 +82,46 @@ export default function TeachAidenWindow(props: Props) {
   const scrollableRef = useRef<HTMLDivElement>(null);
   const startPointEnvironmentRef = useRef<Partial<ShadowModeWorkflowEnvironment>>({});
   const messageCacheRef = useRef<Message[]>([]);
+  const teachAidenDataKeysRef = useRef<Set<number>>(new Set());
+  const draftSopIdRef = useRef<string | undefined>(undefined);
 
-  const [isScrolledToBottom, setIsScrolledToBottom] = useState(false);
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
   const [aidenState, setAidenState] = useState<AidenState>(AidenState.IDLE);
   const [messages, setMessages] = useState<Message[]>([]);
   const [annotationMap, setAnnotationMap] = useState<Record<string, AiAidenApiMessageAnnotation>>({});
+  const [teachAidenDataMap, setTeachAidenDataMap] = useState<Record<number, TeachAidenData>>({});
+
+  if (!draftSopIdRef.current) {
+    draftSopIdRef.current = UUID();
+  }
+  const aiSdkApi = '/api/ai/aiden';
+  const {
+    messages: reverseShadowMessages,
+    append,
+    data: rawData,
+  } = useChat({
+    api: aiSdkApi,
+    headers: props.remoteBrowserSessionId
+      ? { [X_REMOTE_BROWSER_SESSION_ID_HEADER]: props.remoteBrowserSessionId }
+      : undefined,
+    body: { sopId: draftSopIdRef.current },
+  });
+  const data = rawData?.map((d) => AiAidenStreamDataSchema.parse(d)) ?? [];
+  const stateInfos = data.filter((d) => d.type === 'state-info');
+  const reverseShadowAnnotationMap = stateInfos.reduce(
+    (acc, stateInfo, i) => {
+      const messageId = messages.filter((m) => m.role === 'assistant')[i]?.id;
+      if (messageId) acc[messageId] = stateInfo.annotation;
+      return acc;
+    },
+    {} as Record<string, AiAidenApiMessageAnnotation>,
+  );
 
   useEffect(() => {
-    onScroll();
-    if (isScrolledToBottom) scrollToBottom();
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages]);
+    if (messages.length && !userHasScrolled) {
+      scrollToBottom();
+    }
+  }, [messages, userHasScrolled]);
 
   useEffect(() => {
     if (aidenState !== AidenState.SHADOWING) return;
@@ -85,17 +142,14 @@ export default function TeachAidenWindow(props: Props) {
             const position = { x: e.data.position.x, y: e.data.position.y };
 
             // handle mousemove events
-            if (mouseMoveEvents.length < 1) mouseMoveEvents.push({ type: 'move', ts, from: position, to: position });
-            else {
-              const lastMouseMoveEvent = mouseMoveEvents[mouseMoveEvents.length - 1];
-              lastMouseMoveEvent.to = position;
-              if (ts - lastMouseMoveEvent.ts >= REFRESH_INTERVAL_IN_MS)
-                // new mousemove event
-                mouseMoveEvents.push({ type: 'move', ts, from: position, to: position });
-            }
-
             if (mouseAction === 'mousemove') {
-              // do nothing - already handled
+              handleThrottledEvent(
+                mouseMoveEvents,
+                { type: 'move', ts, from: position, to: position },
+                (lastEvent, newEvent) => {
+                  lastEvent.to = newEvent.to;
+                },
+              );
             } else if (mouseAction === 'mousedown') {
               mouseClickEvents.push({ type: 'click', ts, position });
             } else if (mouseAction === 'mouseup') {
@@ -106,7 +160,7 @@ export default function TeachAidenWindow(props: Props) {
           }
           case 'wheel': {
             const distance = { deltaX: e.data.deltaX, deltaY: e.data.deltaY };
-            mouseScrollEvents.push({ type: 'scroll', ts: e.ts, distance });
+            handleThrottledEvent(mouseScrollEvents, { type: 'scroll', ts: e.ts, distance });
             break;
           }
           case 'keyboard':
@@ -122,47 +176,79 @@ export default function TeachAidenWindow(props: Props) {
       // execute tool invocations
       const processedEvents = [...mouseMoveEvents, ...mouseClickEvents, ...mouseScrollEvents, ...keyboardEvents];
       processedEvents.sort((a, b) => a.ts - b.ts);
-      const toolCallMessages = processedEvents
-        .map((e) => {
-          const createMessage = (ti: ToolInvocation) =>
-            ({
-              id: UUID(),
-              role: 'assistant',
-              toolInvocations: [ti],
-              content: '',
-              createdAt: new Date(e.ts),
-            }) as Message;
-          switch (e.type) {
-            case 'move': {
-              const tool = PortalMouseControl_ActionConfig;
-              const toolName = tool.action.replace(':', '-');
-              const params = { deltaX: round(e.to.x - e.from.x, 1), deltaY: round(e.to.y - e.from.y, 1) };
-              if (params.deltaX === 0 && params.deltaY === 0) return null;
-              const args = tool.requestPayloadSchema.parse(params);
-              const result = JSON.stringify(tool.responsePayloadSchema.parse({ status: 'moved' }));
-              return createMessage({ state: 'result', toolCallId: UUID(), toolName, args, result } as ToolInvocation);
-            }
-            case 'click': {
-              const tool = MouseClick_ActionConfig;
-              const toolName = tool.action.replace(':', '-');
-              const args = tool.requestPayloadSchema.parse({ button: 'left' });
-              const result = JSON.stringify(tool.responsePayloadSchema.parse({ status: 'clicked' }));
-              return createMessage({ state: 'result', toolCallId: UUID(), toolName, args, result } as ToolInvocation);
-            }
-            // TODO: add the support of mouse-drag actions
-            case 'scroll': {
-              const tool = MouseWheel_ActionConfig;
-              const toolName = tool.action.replace(':', '-');
-              const args = tool.requestPayloadSchema.parse(e.distance);
-              const result = JSON.stringify(tool.responsePayloadSchema.parse({ status: 'scrolled' }));
-              return createMessage({ state: 'result', toolCallId: UUID(), toolName, args, result } as ToolInvocation);
-            }
-            case 'key':
-              // TODO: add tool call for keyboard events
-              return null;
+      const toolCallMessages = [] as Message[];
+      const newTeachData: Record<number, TeachAidenData> = {};
+      for (let i = 0; i < processedEvents.length; i++) {
+        const e = processedEvents[i];
+
+        const createMessage = (ti: ToolInvocation) =>
+          ({
+            id: UUID(),
+            role: 'assistant',
+            toolInvocations: [ti],
+            content: '',
+            createdAt: new Date(e.ts),
+          }) as Message;
+        switch (e.type) {
+          case 'move': {
+            const tool = PortalMouseControl_ActionConfig;
+            const toolName = tool.action.replace(':', '-');
+            const params = { deltaX: round(e.to.x - e.from.x, 1), deltaY: round(e.to.y - e.from.y, 1) };
+            if (params.deltaX === 0 && params.deltaY === 0) continue;
+            const args = tool.requestPayloadSchema.parse(params);
+            const result = JSON.stringify(tool.responsePayloadSchema.parse({ status: 'moved' }));
+            toolCallMessages.push(
+              createMessage({ state: 'result', toolCallId: UUID(), toolName, args, result } as ToolInvocation),
+            );
+            break;
           }
-        })
-        .filter((m) => m !== null) as Message[];
+          case 'click': {
+            const tool = MouseClick_ActionConfig;
+            const toolName = tool.action.replace(':', '-');
+            const args = tool.requestPayloadSchema.parse({ button: 'left' });
+            const result = JSON.stringify(tool.responsePayloadSchema.parse({ status: 'clicked' }));
+            toolCallMessages.push(
+              createMessage({ state: 'result', toolCallId: UUID(), toolName, args, result } as ToolInvocation),
+            );
+            break;
+          }
+          // TODO: add the support of mouse-drag actions
+          case 'scroll': {
+            const tool = MouseWheel_ActionConfig;
+            const toolName = tool.action.replace(':', '-');
+            const args = tool.requestPayloadSchema.parse(e.distance);
+            const result = JSON.stringify(tool.responsePayloadSchema.parse({ status: 'scrolled' }));
+            toolCallMessages.push(
+              createMessage({ state: 'result', toolCallId: UUID(), toolName, args, result } as ToolInvocation),
+            );
+            break;
+          }
+          case 'key':
+            // TODO: add tool call for keyboard events
+            break;
+        }
+
+        if (!teachAidenDataKeysRef.current.has(e.ts)) {
+          teachAidenDataKeysRef.current.add(e.ts);
+          const response = await sendRuntimeMessage<z.infer<typeof Screenshot_ActionConfig.responsePayloadSchema>>({
+            receiver: RuntimeMessageReceiver.SERVICE_WORKER,
+            action: ServiceWorkerMessageAction.SCREENSHOT,
+            payload: {
+              config: { withCursor: true },
+            },
+          });
+          if (!response.base64) throw new Error('Screenshot data is missing');
+          newTeachData[e.ts] = { screenshot: response.base64, event: e.type };
+        }
+      }
+
+      if (Object.keys(newTeachData).length > 0) {
+        setTeachAidenDataMap((prev) => ({
+          ...prev,
+          ...newTeachData,
+        }));
+      }
+
       setMessages((prev) => [prev[0], ...toolCallMessages]);
 
       isProcessingEventRef.current = false;
@@ -176,99 +262,43 @@ export default function TeachAidenWindow(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aidenState, interactionEvents]);
 
-  const getScrollableProps = () => {
-    const scrollable = scrollableRef.current;
-    if (!scrollable) return {};
+  const handleScroll = () => {
+    const { scrollTop, scrollHeight, clientHeight } = scrollableRef.current || {};
+    if (!scrollTop || !scrollHeight || !clientHeight) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = scrollable;
-    const scrollableHeight = scrollHeight - clientHeight;
-    const isScrollable = scrollableHeight > 0;
-    const scrolledToBottom = scrollTop >= scrollableHeight;
-    return { scrollable, scrollTop, scrollHeight, clientHeight, scrollableHeight, isScrollable, scrolledToBottom };
-  };
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 10;
 
-  const onScroll = () => {
-    const { isScrollable, scrolledToBottom } = getScrollableProps();
-    setIsScrolledToBottom(!isScrollable || scrolledToBottom);
+    if (!isAtBottom) {
+      setUserHasScrolled(true);
+    } else {
+      setUserHasScrolled(false);
+    }
   };
 
   // actions
   const scrollToBottom = () => {
-    const { scrollable, scrollableHeight } = getScrollableProps();
-    if (!scrollable) return;
-    scrollable.scrollTo({ top: scrollableHeight, behavior: 'smooth' });
+    if (!scrollableRef.current) return;
+    scrollableRef.current.scrollTop = scrollableRef.current.scrollHeight;
   };
   const resetMessages = () => {
     setAidenState(AidenState.IDLE);
     setMessages([]);
+    teachAidenDataKeysRef.current.clear();
   };
   const startReverseShadow = async () => {
-    if (!props.remoteBrowserSessionId) throw new Error('No remote browser session id found');
-
-    messageCacheRef.current = messages;
-    const [firstMessage, ...executionMessages] = messages.map((m) => ({ ...m, annotations: undefined }));
-    const hasActions = executionMessages.some((m) => m.role === 'assistant' && (m.toolInvocations?.length ?? 0) > 0);
-    const { startPosition } = startPointEnvironmentRef.current;
-
-    if (hasActions) {
-      if (!startPosition) throw new Error('No start position found');
-      // setup the start position
-      await sendRuntimeMessage({
-        receiver: RuntimeMessageReceiver.SERVICE_WORKER,
-        action: ServiceWorkerMessageAction.MOUSE_MOVE,
-        payload: { x: startPosition.x, y: startPosition.y },
-      });
-    }
-
-    // execute step by step
+    const { startUrl } = startPointEnvironmentRef.current;
+    await sendRuntimeMessage({
+      receiver: RuntimeMessageReceiver.SERVICE_WORKER,
+      action: ServiceWorkerMessageAction.NAVIGATE_PAGE,
+      payload: { action: PageNavigationAction.GOTO, url: startUrl },
+    });
+    await sendRuntimeMessage({
+      receiver: RuntimeMessageReceiver.SERVICE_WORKER,
+      action: ServiceWorkerMessageAction.MOUSE_RESET,
+      payload: {},
+    });
     setAidenState(AidenState.REVERSE_SHADOWING);
-    setMessages([firstMessage]); // keep the first message
-    const stepMessages = [firstMessage];
-    const stepAnnotations = [] as AiAidenApiMessageAnnotation[];
-    for (const msg of executionMessages) {
-      // wait for a second to mimic ai response
-      await WaitUtils.wait(REVERSE_SHADOW_STEP_DELAY);
-
-      if (msg.role !== 'assistant') {
-        setMessages((prev) => [...prev, { ...msg, id: msg.id ?? UUID() } as Message]);
-        continue;
-      }
-
-      // append the running message
-      setMessages((prev) => [...prev, msg]);
-      stepMessages.push(msg);
-      const stepCoreMessages = convertToCoreMessages(stepMessages);
-      if (msg.toolInvocations && msg.toolInvocations.length > 1)
-        throw new Error('Multiple tool invocations not supported yet.');
-
-      // execute tool invocation
-      const ti = !msg.toolInvocations ? undefined : msg.toolInvocations[0];
-      const url = getHost() + '/api/portal/replay-assistant-message';
-      const rsp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          [X_REMOTE_BROWSER_SESSION_ID_HEADER]: props.remoteBrowserSessionId!,
-        },
-        body: JSON.stringify({
-          ts: msg.createdAt?.getTime() ?? Date.now(),
-          toolInvocation: ti,
-          stepMessages: stepCoreMessages,
-        }),
-      });
-      if (!rsp.ok) throw new Error('Failed to execute tool invocation');
-      const json = await rsp.json();
-      if (!json.success) throw new Error('Failed to execute tool invocation');
-
-      // append message annotations
-      stepAnnotations.push(json.annotation);
-      if (!msg.id) throw new Error('Message ID not found');
-      setAnnotationMap((prev) => ({ ...prev, [msg.id]: json.annotation }));
-    }
-
-    // wait for a second to mimic ai response
-    await WaitUtils.wait(REVERSE_SHADOW_STEP_DELAY);
-    setAidenState(AidenState.REVIEWED);
+    append({ role: 'user', content: 'Start SOP execution' });
   };
   const saveMessages = async () => {
     const lastMessage = messages[messages.length - 1];
@@ -295,23 +325,26 @@ export default function TeachAidenWindow(props: Props) {
 
     resetMessages();
   };
-  const deleteMessage = (id: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== id));
-    setAidenState(AidenState.IDLE);
-  };
   const appendMessage = (m: Message) => {
-    setMessages((prev) => [...prev, { ...m, id: m.id ?? UUID() }]);
+    setMessages((prev) => [...prev, { ...m, id: m.id || UUID() }]);
     setAidenState(AidenState.IDLE);
   };
 
-  const shouldShowConfirmationBar =
-    aidenState === AidenState.REVIEWED || (messages.length > 1 && aidenState === AidenState.IDLE);
-  const title =
-    aidenState === AidenState.IDLE
-      ? 'Teach Aiden'
-      : aidenState === AidenState.SHADOWING
-        ? 'Aiden shadowing...'
-        : 'Reverse shadowing...';
+  const shouldShowConfirmationBar = aidenState === AidenState.REVIEWED || aidenState === AidenState.SOP_GENERATED;
+  const getTitle = () => {
+    switch (aidenState) {
+      case AidenState.IDLE:
+        return 'Teach Aiden';
+      case AidenState.SHADOWING:
+        return 'Aiden shadowing...';
+      case AidenState.SOP_GENERATING:
+        return 'Generating SOP...';
+      case AidenState.SOP_GENERATED:
+        return 'SOP generated';
+      case AidenState.REVERSE_SHADOWING:
+        return 'Reverse shadowing...';
+    }
+  };
 
   const renderLeftNavButton = () => {
     const buttonOnClick = async () => {
@@ -344,27 +377,23 @@ export default function TeachAidenWindow(props: Props) {
 
         // non-blocking fetches
         void fetchStartPosition();
+        setAidenState(AidenState.SHADOWING);
       }
 
       if (aidenState === AidenState.REVIEWED) {
         setMessages(messageCacheRef.current);
         messageCacheRef.current = [];
+        setAidenState(AidenState.IDLE);
       }
 
-      // update the state
-      const switchAidenState = (prev: AidenState) => {
-        switch (prev) {
-          case AidenState.IDLE:
-            return AidenState.SHADOWING;
-          case AidenState.SHADOWING:
-            return AidenState.IDLE;
-          case AidenState.REVERSE_SHADOWING:
-            return AidenState.IDLE;
-          case AidenState.REVIEWED:
-            return AidenState.IDLE;
-        }
-      };
-      setAidenState((prev) => switchAidenState(prev));
+      if (aidenState === AidenState.SHADOWING) {
+        setAidenState(AidenState.SOP_GENERATING);
+        await fetch(getHost() + '/api/teach/generate-sop', {
+          method: 'POST',
+          body: JSON.stringify({ teachAidenDataMap: teachAidenDataMap, draftSopId: draftSopIdRef.current }),
+        });
+        setAidenState(AidenState.SOP_GENERATED);
+      }
     };
     const buttonStyle = 'h-full w-full text-white';
     const renderButton = () => {
@@ -376,6 +405,10 @@ export default function TeachAidenWindow(props: Props) {
           return <StopCircleIcon className={buttonStyle} />;
         case AidenState.REVIEWED:
           return <ChevronLeftIcon className={buttonStyle} />;
+        case AidenState.SOP_GENERATING:
+          return <ArrowPathIcon className={buttonStyle} />;
+        case AidenState.SOP_GENERATED:
+          return <CheckCircleIcon className={buttonStyle} />;
       }
     };
 
@@ -391,10 +424,10 @@ export default function TeachAidenWindow(props: Props) {
   };
   const renderConfirmationBar = () => {
     if (!shouldShowConfirmationBar) return null;
-    if (aidenState !== AidenState.REVIEWED)
+    if (aidenState === AidenState.SOP_GENERATED)
       return (
         <div className="absolute left-0 top-12 flex h-10 w-full items-center justify-evenly bg-sky-800/50">
-          <button onClick={startReverseShadow}>Start Reverse Shadow</button>
+          <button onClick={startReverseShadow}>Start Reverse Shadow SOP execution</button>
         </div>
       );
 
@@ -410,7 +443,7 @@ export default function TeachAidenWindow(props: Props) {
     <div className={props.className}>
       <div className="relative h-full w-full overflow-hidden rounded-3xl shadow-2xl shadow-blue-600 backdrop-blur-md">
         <div className="fixed left-0 top-0 z-50 flex h-12 w-full items-center justify-center bg-sky-800/95 shadow-xl shadow-fuchsia-600/50 backdrop-blur-sm">
-          <h1 className="text-white">{title}</h1>
+          <h1 className="text-white">{getTitle()}</h1>
           {renderLeftNavButton()}
           <button className="absolute right-5 top-4 flex h-5 w-5 items-center justify-center" onClick={resetMessages}>
             <PencilSquareIcon className="h-full w-full text-white" />
@@ -421,17 +454,28 @@ export default function TeachAidenWindow(props: Props) {
 
         <>
           <AiMessagesForChatBox
-            annotationMap={annotationMap}
+            annotationMap={aidenState === AidenState.REVERSE_SHADOWING ? reverseShadowAnnotationMap : annotationMap}
             className={shouldShowConfirmationBar ? 'pt-24' : 'pt-14'}
-            deleteMessage={deleteMessage}
-            logoSubtitle={title}
-            messages={messages}
-            onScroll={onScroll}
+            logoSubtitle={getTitle()}
+            messages={aidenState === AidenState.REVERSE_SHADOWING ? reverseShadowMessages : messages}
+            onScroll={handleScroll}
             scrollableRef={scrollableRef}
             teachMode
           />
-          <ScrollToBottomButton isScrolledToBottom={isScrolledToBottom} scrollToBottom={scrollToBottom} />
-          <AiMessageTeachModeInput formRef={formRef} messages={messages} append={appendMessage} />
+          {userHasScrolled && (
+            <ScrollToBottomButton
+              scrollToBottom={() => {
+                scrollToBottom();
+                setUserHasScrolled(false);
+              }}
+            />
+          )}
+          <AiMessageTeachModeInput
+            formRef={formRef}
+            messages={messages}
+            append={appendMessage}
+            aidenState={aidenState}
+          />
         </>
       </div>
     </div>
