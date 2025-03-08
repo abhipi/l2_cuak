@@ -100,9 +100,6 @@ export const useRemoteBrowserSession = (props: Props): RemoteBrowserSession => {
     });
     newSocket.on('interaction-event', (event: object) => {
       const e = RemoteBrowserInteractionEventSchema.parse(event);
-      if (e.type === 'wheel') {
-        console.log('wheel event!!!!!!!!', e);
-      }
       addEvent(e);
     });
   };

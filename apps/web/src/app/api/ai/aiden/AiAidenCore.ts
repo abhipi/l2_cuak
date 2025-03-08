@@ -18,10 +18,11 @@ import { RegisteredToolSetName } from '~shared/agent/RegisteredToolSetName';
 import { RuntimeMessageReceiver } from '~shared/messaging/RuntimeMessageReceiver';
 import { FetchCurrentCursorType_ActionConfig } from '~shared/messaging/action-configs/FetchCurrentCursorType.ActionConfig';
 import { Screenshot_ActionConfig } from '~shared/messaging/action-configs/page-actions/Screenshot.ActionConfig';
+import { PageScreenshotAction } from '~shared/messaging/action-configs/page-actions/types';
 import { ServiceWorkerMessageAction } from '~shared/messaging/service-worker/ServiceWorkerMessageAction';
 import { RuntimeMessage, RuntimeMessageResponse } from '~shared/messaging/types';
 import { SupabaseClientForServer } from '~shared/supabase/client/SupabaseClientForServer';
-import { BoundingBoxGenerator, UserConfig } from '~shared/user-config/UserConfig';
+import { BoundingBoxGenerator, genFetchUserConfig } from '~shared/user-config/UserConfig';
 import { AiAidenApiMessageAnnotation } from '~src/app/api/ai/aiden/AiAidenApi';
 import { AiRegisteredToolSet } from '~src/app/api/llm/agent/AiRegisteredToolSet';
 
@@ -56,7 +57,7 @@ export class AiAidenCore {
     const anno = {} as Partial<AiAidenApiMessageAnnotation>;
 
     const supabase = await SupabaseClientForServer.createForServerComponent();
-    const userConfig = await UserConfig.genFetch(config.userId, supabase);
+    const userConfig = await genFetchUserConfig(config.userId, supabase);
 
     // fetch screenshot
     const screenshotConfig = {
@@ -66,6 +67,7 @@ export class AiAidenCore {
       receiver: RuntimeMessageReceiver.SERVICE_WORKER,
       action: ServiceWorkerMessageAction.SCREENSHOT,
       payload: {
+        action: PageScreenshotAction.SCREENSHOT,
         config: screenshotConfig,
         omniparserHost:
           userConfig.boundingBoxGenerator === BoundingBoxGenerator.OMNI_PARSER
@@ -110,7 +112,7 @@ export class AiAidenCore {
     const systemMessages = [] as CoreMessage[];
     systemMessages.push({
       role: 'system',
-      content: AiAidenSystemPrompts.getPrompt(config.systemPromptVersion, config.isClaude),
+      content: AiAidenSystemPrompts.getPrompt(config.systemPromptVersion),
     } as CoreMessage);
     systemMessages.push({ role: 'system', content: AiAidenBoundingBoxCoordinatesSystemPrompt } as CoreMessage);
 
@@ -148,7 +150,7 @@ export class AiAidenCore {
     type?: 'single' | 'round';
   }): CoreMessage[] {
     const { annotation, type } = config;
-    const stepInfoType = type || 'round';
+    const stepInfoType = type ?? 'round';
     const ts = new Date(annotation.ts).toLocaleString();
 
     const messages = [] as CoreMessage[];
@@ -195,7 +197,7 @@ export class AiAidenCoreInstance {
   }
 
   constructor(stepHistorySize?: number) {
-    this.stepHistorySize = stepHistorySize || DEFAULT_AGENT_STEP_HISTORY_DEPTH;
+    this.stepHistorySize = stepHistorySize ?? DEFAULT_AGENT_STEP_HISTORY_DEPTH;
   }
 
   public readonly stepHistorySize: number;

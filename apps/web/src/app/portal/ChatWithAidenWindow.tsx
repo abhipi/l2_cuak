@@ -1,11 +1,9 @@
 'use client';
 
 import { ChatBubbleLeftRightIcon, ChevronDownIcon, PencilSquareIcon } from '@heroicons/react/24/solid';
-import { Alert, Snackbar } from '@mui/material';
 import { useChat } from 'ai/react';
 import { useEffect, useRef, useState } from 'react';
 import { X_REMOTE_BROWSER_SESSION_ID_HEADER } from '~shared/http/headers';
-import { ALogger } from '~shared/logging/ALogger';
 import { AiAgentSOP } from '~shared/sop/AiAgentSOP';
 import { AiAidenApiMessageAnnotation, AiAidenStreamDataSchema } from '~src/app/api/ai/aiden/AiAidenApi';
 import { AiMessageChatBoxInput } from '~src/components/chat-box/AiMessageChatBoxInput';
@@ -20,9 +18,8 @@ interface Props {
 }
 
 export default function ChatWithAidenWindow(props: Props) {
-  const [errorSnackbar, setErrorSnackbar] = useState({ open: false, message: '' });
   const [isChatWithGraphOpen, setIsChatWithGraphOpen] = useState(true);
-  const [userHasScrolled, setUserHasScrolled] = useState(false);
+  const [isScrolledToBottom, setIsScrolledToBottom] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const scrollableRef = useRef<HTMLDivElement>(null);
 
@@ -43,11 +40,6 @@ export default function ChatWithAidenWindow(props: Props) {
     body: {
       sopId: props.sop ? props.sop.id : undefined,
     },
-    onError: (err) => {
-      let errorMessage = err.message;
-      ALogger.warn({ context: 'Chat error received', error: errorMessage });
-      if (errorMessage) setErrorSnackbar({ open: true, message: errorMessage });
-    },
   });
   const data = rawData?.map((d) => AiAidenStreamDataSchema.parse(d)) ?? [];
   const stateInfos = data.filter((d) => d.type === 'state-info');
@@ -64,41 +56,39 @@ export default function ChatWithAidenWindow(props: Props) {
   const lastError = lastErrorElement ? new Error(lastErrorElement?.error) : undefined;
 
   useEffect(() => {
-    if (messages.length && !userHasScrolled) {
-      scrollToBottom();
-    }
-  }, [messages, userHasScrolled]);
+    onScroll();
+    if (isScrolledToBottom) scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   useEffect(() => {
     if (!props.shouldStartSop || !props.sop || messages.length > 0) return;
     append({ role: 'user', content: 'Start SOP execution' });
   }, [props.shouldStartSop, props.sop]);
 
-  const handleScroll = () => {
-    const { scrollTop, scrollHeight, clientHeight } = scrollableRef.current || {};
-    if (!scrollTop || !scrollHeight || !clientHeight) return;
+  // scroll
+  const getScrollableProps = () => {
+    const scrollable = scrollableRef.current;
+    if (!scrollable) return {};
 
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 10;
-
-    if (!isAtBottom) {
-      setUserHasScrolled(true);
-    } else {
-      setUserHasScrolled(false);
-    }
+    const { scrollTop, scrollHeight, clientHeight } = scrollable;
+    const scrollableHeight = scrollHeight - clientHeight;
+    const isScrollable = scrollableHeight > 0;
+    const scrolledToBottom = scrollTop >= scrollableHeight;
+    return { scrollable, scrollTop, scrollHeight, clientHeight, scrollableHeight, isScrollable, scrolledToBottom };
   };
-
+  const onScroll = () => {
+    const { isScrollable, scrolledToBottom } = getScrollableProps();
+    setIsScrolledToBottom(!isScrollable || scrolledToBottom);
+  };
   const scrollToBottom = () => {
-    if (!scrollableRef.current) return;
-    scrollableRef.current.scrollTop = scrollableRef.current.scrollHeight;
+    const { scrollable, scrollableHeight } = getScrollableProps();
+    if (!scrollable) return;
+    scrollable.scrollTo({ top: scrollableHeight, behavior: 'smooth' });
   };
-
   const resetState = () => {
     setMessages([]);
     setData([]);
-  };
-
-  const handleCloseErrorSnackbar = () => {
-    setErrorSnackbar({ ...errorSnackbar, open: false });
   };
 
   if (!isChatWithGraphOpen)
@@ -133,17 +123,10 @@ export default function ChatWithAidenWindow(props: Props) {
             error={lastError}
             logoSubtitle="Chat with Aiden"
             messages={messages}
-            onScroll={handleScroll}
+            onScroll={onScroll}
             scrollableRef={scrollableRef}
           />
-          {userHasScrolled && (
-            <ScrollToBottomButton
-              scrollToBottom={() => {
-                scrollToBottom();
-                setUserHasScrolled(false);
-              }}
-            />
-          )}
+          <ScrollToBottomButton isScrolledToBottom={isScrolledToBottom} scrollToBottom={scrollToBottom} />
           <AiMessageChatBoxInput
             stop={stop}
             formRef={formRef}
@@ -153,17 +136,6 @@ export default function ChatWithAidenWindow(props: Props) {
           />
         </>
       </div>
-
-      <Snackbar
-        open={errorSnackbar.open}
-        autoHideDuration={5_000}
-        onClose={handleCloseErrorSnackbar}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-      >
-        <Alert onClose={handleCloseErrorSnackbar} severity="warning" variant="filled" sx={{ width: '100%' }}>
-          {errorSnackbar.message.length > 200 ? `${errorSnackbar.message.substring(0, 200)}...` : errorSnackbar.message}
-        </Alert>
-      </Snackbar>
     </div>
   );
 }
