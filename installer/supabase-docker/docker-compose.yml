@@ -351,6 +351,8 @@ services:
     #     source: ${PWD}/gcloud.json
     #     target: /opt/app/rel/logflare/bin/gcloud.json
     #     read_only: true
+    volumes:
+      - ./config.toml::/etc/config/config.toml:ro
     healthcheck:
       test:
         [
