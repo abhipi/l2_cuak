@@ -352,7 +352,7 @@ services:
     #     target: /opt/app/rel/logflare/bin/gcloud.json
     #     read_only: true
     volumes:
-      - ./config.toml::/etc/config/config.toml:ro
+      - ./config.toml:/etc/config/config.toml:ro
     healthcheck:
       test:
         [
