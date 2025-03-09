@@ -10,4 +10,4 @@ cp installer/supabase-docker/.env.example installer/supabase-docker/.env
 $DOCKER_COMPOSE_CMD \
   --env-file installer/supabase-docker/.env \
   -f installer/supabase-docker/docker-compose.yml \
-  up --force-recreate --pull always -d
+  up --force-recreate --pull always
