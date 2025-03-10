@@ -4,9 +4,11 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+playwright = "*"
 
 [dev-packages]
 browser-use = "*"
+python-dotenv = "*"
 
 [requires]
 python_version = "3.11"
