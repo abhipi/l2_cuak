@@ -6,7 +6,7 @@ name = "pypi"
 [packages]
 
 [dev-packages]
-browser-use = {file = ".", editable = true}
+browser-use = "*"
 
 [requires]
 python_version = "3.11"
