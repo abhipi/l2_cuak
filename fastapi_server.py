@@ -13,6 +13,7 @@ app = FastAPI()
 
 # In-memory dict to store session data (process, etc.)
 SESSIONS = {}
+TIMEOUT = 80
 
 # Enable CORS
 app.add_middleware(
@@ -69,7 +70,7 @@ def start_and_stream(payload: dict):
         yield f"data: Session started with ID: {session_id}.\n\n"
 
         start_time = time.time()
-        timeout_seconds = 80  # Timeout after 80s
+        timeout_seconds = TIMEOUT  # Timeout after 80s
 
         try:
             while True:
@@ -127,6 +128,9 @@ def start_and_stream(payload: dict):
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
+###########################
+# Endpoint to Stream the VNC from for GIVEN time period
+###########################
 @app.get("/vnc/{session_id}")
 def get_vnc(session_id: str):
     """
