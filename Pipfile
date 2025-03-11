@@ -9,6 +9,10 @@ playwright = "*"
 [dev-packages]
 browser-use = "*"
 python-dotenv = "*"
+fastapi = "*"
+uvicorn = "*"
+asyncio = "*"
+requests = "*"
 
 [requires]
 python_version = "3.11"
