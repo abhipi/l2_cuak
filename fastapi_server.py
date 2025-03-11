@@ -149,12 +149,17 @@ def get_vnc(session_id: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>NoVNC Session {session_id}</title>
 
-        <!-- ✅ Load noVNC from official GitHub repository -->
+        <!-- ✅ Load noVNC scripts correctly -->
         <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/app/ui.js"></script>
-        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js"></script>
+        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js" defer></script>
 
         <script>
-            document.addEventListener("DOMContentLoaded", function() {{
+            function initNoVNC() {{
+                if (typeof RFB === "undefined") {{
+                    console.error("🚨 ERROR: RFB is not defined! Check if the script loaded correctly.");
+                    return;
+                }}
+
                 try {{
                     const vncHost = "{vnc_host}";
                     const vncPort = "{vnc_port}";
@@ -174,9 +179,15 @@ def get_vnc(session_id: str):
 
                     rfb.addEventListener("connect", () => console.log("✅ VNC Connected"));
                     rfb.addEventListener("disconnect", () => console.log("❌ VNC Disconnected"));
+
                 }} catch (error) {{
                     console.error("🚨 VNC Connection Error:", error);
                 }}
+            }}
+
+            // Ensure scripts are loaded before initializing noVNC
+            document.addEventListener("DOMContentLoaded", function() {{
+                setTimeout(initNoVNC, 500);  // Delay initialization to allow script loading
             }});
         </script>
 
@@ -191,6 +202,7 @@ def get_vnc(session_id: str):
     </body>
     </html>
     """
+
     return Response(content=html_content, media_type="text/html")
 
 
