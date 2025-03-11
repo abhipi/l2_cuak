@@ -71,7 +71,7 @@ def start_and_stream(payload: dict):
         while True:
             elapsed = time.time() - start_time
 
-            # Create tasks instead of coroutines
+            # Create tasks for reading stdout and stderr
             stdout_task = asyncio.create_task(
                 asyncio.to_thread(process.stdout.readline)
             )
@@ -79,38 +79,42 @@ def start_and_stream(payload: dict):
                 asyncio.to_thread(process.stderr.readline)
             )
 
-            # Wait for either stdout or stderr
+            # Wait for either stdout or stderr to be ready, or timeout after 0.1s
             done, pending = await asyncio.wait(
-                {stdout_task, stderr_task}, return_when=asyncio.FIRST_COMPLETED
+                {stdout_task, stderr_task},
+                timeout=0.1,
+                return_when=asyncio.FIRST_COMPLETED,
             )
 
+            # Process completed tasks
             for task in done:
                 line = task.result().strip()
                 if line:
                     yield f"data: {line}\n\n"
 
-            # Cancel any unfinished tasks
+            # Cancel any pending tasks to avoid resource leaks
             for task in pending:
                 task.cancel()
 
-            # If timeout is reached, terminate the process and break the loop
+            # Check if timeout has been reached
             if elapsed > timeout_seconds:
                 yield "data: Task timed out after 60s, killing process...\n\n"
-                process.terminate()  # Graceful shutdown attempt
+                process.terminate()  # Attempt graceful shutdown
                 try:
-                    process.wait(timeout=2)  # Give 2 seconds to exit cleanly
+                    process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     process.kill()  # Force kill if still running
-                yield "event: close\ndata: end\n\n"  # Send SSE close event
-                return  # <-- Ensures generator exits immediately
+                yield "event: close\ndata: end\n\n"
+                return  # Exit the generator immediately
 
-            # If process finished naturally, break
+            # Check if the process finished naturally
             if process.poll() is not None:
                 yield "data: Task completed.\n\n"
-                yield "event: close\ndata: end\n\n"  # Send SSE close event
-                return  # <-- Ensures generator exits immediately
+                yield "event: close\ndata: end\n\n"
+                return  # Exit the generator immediately
 
-            await asyncio.sleep(0.05)  # Prevent CPU overuse
+            # Brief sleep to avoid high CPU usage
+            await asyncio.sleep(0.05)
 
         yield "event: close\ndata: end\n\n"
 
