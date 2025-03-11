@@ -131,76 +131,117 @@ def start_and_stream(payload: dict):
 def get_vnc(session_id: str):
     """
     Return an HTML page embedding a noVNC viewer that auto-injects a VNC password.
-    Because of ALB sticky sessions, the user will connect to the same instance that started their job.
+    The page uses the environment variable VNC_PASSWORD.
     """
     if session_id not in SESSIONS:
         return {"error": "Session not found or expired"}
 
     # Retrieve host information and VNC password from environment variables
-    vnc_host = os.getenv("PUBLIC_DNS", "52.86.72.216")  # Public DNS of the EC2 instance
-    vnc_port = 6081  # Port for Chrome
-    vnc_password = os.getenv("VNC_PASSWORD", "12345678")  # Default Password
+    vnc_host = os.getenv("PUBLIC_DNS", "52.86.72.216")
+    vnc_port = os.getenv(
+        "VNC_PORT", "6081"
+    )  # You can also set this in your environment
+    vnc_password = os.getenv("VNC_PASSWORD", "12345678")
 
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>NoVNC Session {session_id}</title>
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoVNC Session {session_id}</title>
+    <style>
+        body {{
+            margin: 0;
+            background-color: dimgrey;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }}
+        html {{
+            height: 100%;
+        }}
+        #top_bar {{
+            background-color: #6e84a3;
+            color: white;
+            font: bold 12px Helvetica;
+            padding: 6px 5px 4px 5px;
+            border-bottom: 1px outset;
+        }}
+        #status {{
+            text-align: center;
+        }}
+        #sendCtrlAltDelButton {{
+            position: fixed;
+            top: 0px;
+            right: 0px;
+            border: 1px outset;
+            padding: 5px;
+            cursor: pointer;
+        }}
+        #screen {{
+            flex: 1;
+            overflow: hidden;
+        }}
+    </style>
+    <!-- Import noVNC's RFB module from a stable CDN -->
+    <script type="module">
+        import RFB from 'https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js';
 
-        <!-- ✅ Load noVNC from a stable CDN -->
-        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js"></script>
+        // Function to update status in the top bar
+        function status(text) {{
+            document.getElementById('status').textContent = text;
+        }}
 
-        <script>
-            function initNoVNC() {{
-                try {{
-                    // Ensure RFB is loaded before executing
-                    if (typeof RFB === "undefined") {{
-                        console.error("🚨 ERROR: RFB is not defined! The script failed to load.");
-                        return;
-                    }}
-
-                    const vncHost = "{vnc_host}";
-                    const vncPort = "{vnc_port}";
-                    const vncPassword = "{vnc_password}";
-                    const vncUrl = `ws://${{vncHost}}:${{vncPort}}`;
-
-                    console.log("🔍 Connecting to:", vncUrl);
-
-                    const rfb = new RFB(document.getElementById("noVNC_canvas"), vncUrl, {{
-                        credentials: {{
-                            password: vncPassword
-                        }}
-                    }});
-
-                    rfb.scaleViewport = true;
-                    rfb.viewOnly = false;
-
-                    rfb.addEventListener("connect", () => console.log("✅ VNC Connected"));
-                    rfb.addEventListener("disconnect", () => console.log("❌ VNC Disconnected"));
-
-                }} catch (error) {{
-                    console.error("🚨 VNC Connection Error:", error);
+        // Event listener for the Ctrl+Alt+Del button
+        document.addEventListener("DOMContentLoaded", function() {{
+            document.getElementById('sendCtrlAltDelButton').onclick = function() {{
+                if (rfb) {{
+                    rfb.sendCtrlAltDel();
                 }}
+            }};
+        }});
+
+        // Set connection parameters using environment-injected defaults
+        const host = "{vnc_host}";
+        const port = "{vnc_port}";
+        const password = "{vnc_password}";
+        const path = "websockify";  // Adjust if your noVNC proxy uses a different path
+
+        let url;
+        if (window.location.protocol === "https:") {{
+            url = 'wss://';
+        }} else {{
+            url = 'ws://';
+        }}
+        url += host + ":" + port + "/" + path;
+
+        let rfb;
+        document.addEventListener("DOMContentLoaded", () => {{
+            status("Connecting");
+            try {{
+                rfb = new RFB(document.getElementById('screen'), url, {{
+                    credentials: {{ password: password }}
+                }});
+                rfb.addEventListener("connect", () => status("Connected to VNC"));
+                rfb.addEventListener("disconnect", () => status("Disconnected"));
+                rfb.viewOnly = false;
+                rfb.scaleViewport = true;
+            }} catch (err) {{
+                console.error("VNC Connection Error:", err);
+                status("Error: " + err);
             }}
-
-            // Ensure the script loads before calling initNoVNC()
-            document.addEventListener("DOMContentLoaded", initNoVNC);
-        </script>
-
-        <style>
-            html, body {{ height: 100%; margin: 0; padding: 0; background-color: black; }}
-            #noVNC_canvas {{ width: 100%; height: 100%; }}
-        </style>
-    </head>
-    <body>
-        <h3 style="color:white; text-align:center;">NoVNC Connection for Session {session_id}</h3>
-        <div id="noVNC_canvas"></div>
-    </body>
-    </html>
-    """
-
+        }});
+    </script>
+</head>
+<body>
+    <div id="top_bar">
+        <div id="status">Loading</div>
+        <div id="sendCtrlAltDelButton">Send CtrlAltDel</div>
+    </div>
+    <div id="screen"></div>
+</body>
+</html>
+"""
     return Response(content=html_content, media_type="text/html")
 
 
