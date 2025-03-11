@@ -7,6 +7,7 @@ import time
 import asyncio
 import json
 import os
+import signal
 
 app = FastAPI()
 
@@ -38,14 +39,10 @@ def start_and_stream(payload: dict):
     Returns a Server-Sent Events (SSE) stream:
       - Each line of script output is sent as 'data: ...\n\n'
       - If 60s elapse, we terminate the script and end the stream.
-      - Also returns a unique session_id and a link to a VNC page
-        if you want the user to see or use VNC.
+      - Also returns a unique session_id and a link to a VNC page.
     """
-    # Generate session_id
     session_id = str(uuid.uuid4())
     payload["session_id"] = session_id
-
-    # JSON-encode payload
     payload_json = json.dumps(payload)
 
     # Start the script
@@ -54,58 +51,54 @@ def start_and_stream(payload: dict):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        preexec_fn=os.setsid,  # Makes it a process group for clean termination
     )
 
-    # Store process info in-memory
+    # Store session info
     SESSIONS[session_id] = {
         "process": process,
         "start_time": time.time(),
         "payload": payload,
     }
 
-    # We'll provide a VNC URL, assuming noVNC is at port 6081
-    # Adjust to your actual environment
     vnc_url = f"http://{os.getenv('PUBLIC_DNS','localhost')}:6081/vnc.html"
 
-    # Build an async generator to read lines and stream them
     async def event_stream():
         start_time = time.time()
         timeout_seconds = 60
         yield f"data: Session started: {session_id}\n\n"
         yield f"data: Access VNC at: {vnc_url}\n\n"
 
-        # Continuously read from stdout
         while True:
-            # Read one line from the script
-            line = process.stdout.readline()
+            # Read both stdout and stderr
+            stdout_line = process.stdout.readline()
+            stderr_line = process.stderr.readline()
             elapsed = time.time() - start_time
 
-            # If script has output, send it
-            if line:
-                # SSE format: data: <message>\n\n
-                yield f"data: {line.rstrip()}\n\n"
+            # Send stdout
+            if stdout_line:
+                yield f"data: {stdout_line.rstrip()}\n\n"
+            # Send stderr
+            if stderr_line:
+                yield f"data: ERROR: {stderr_line.rstrip()}\n\n"
 
-            # Check timeout
-            if elapsed > timeout_seconds:
-                process.terminate()
-                yield "data: Task timed out after 60 seconds and was terminated.\n\n"
-                break
-
-            # If process ended, break
+            # If process finishes, stop
             if process.poll() is not None:
+                yield "data: Task completed.\n\n"
                 break
 
-            # Sleep briefly to avoid tight loop
-            await asyncio.sleep(0.05)
+            # Check timeout (if > 60s, kill process)
+            if elapsed > timeout_seconds:
+                yield "data: Task timed out after 60 seconds. Killing process...\n\n"
+                os.killpg(
+                    os.getpgid(process.pid), signal.SIGTERM
+                )  # Kill entire process group
+                break
 
-        # If the process finished normally, send final message
-        if process.poll() is not None:
-            yield "data: Task completed.\n\n"
+            await asyncio.sleep(0.1)
 
-        # Close out with an SSE terminator
         yield "event: close\ndata: end\n\n"
 
-    # Return the StreamingResponse with content type for SSE
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
