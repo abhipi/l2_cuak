@@ -62,7 +62,7 @@ def start_and_stream(payload: dict):
     timeout_seconds = 60
 
     async def stream_generator():
-        """Streams the output of `browsing_agent.py` in real-time and ensures timeout at 60s."""
+        """Streams the output of `browsing_agent.py` in real-time and force-closes at 60s."""
         yield f"data: Session started.\n\n"
 
         start_time = time.time()
@@ -93,7 +93,7 @@ def start_and_stream(payload: dict):
             for task in pending:
                 task.cancel()
 
-            # If timeout is reached, terminate the process
+            # If timeout is reached, terminate the process and break the loop
             if elapsed > timeout_seconds:
                 yield "data: Task timed out after 60s, killing process...\n\n"
                 process.terminate()  # Graceful shutdown attempt
@@ -101,12 +101,14 @@ def start_and_stream(payload: dict):
                     process.wait(timeout=2)  # Give 2 seconds to exit cleanly
                 except subprocess.TimeoutExpired:
                     process.kill()  # Force kill if still running
-                break  # Exit the loop immediately
+                yield "event: close\ndata: end\n\n"  # Send SSE close event
+                return  # <-- Ensures generator exits immediately
 
             # If process finished naturally, break
             if process.poll() is not None:
                 yield "data: Task completed.\n\n"
-                break
+                yield "event: close\ndata: end\n\n"  # Send SSE close event
+                return  # <-- Ensures generator exits immediately
 
             await asyncio.sleep(0.05)  # Prevent CPU overuse
 
