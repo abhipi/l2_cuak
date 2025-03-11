@@ -43,11 +43,18 @@ def start_and_stream(payload: dict):
 
     # Create a subprocess that we can read line-by-line
     process = subprocess.Popen(
-        ["pipenv", "run", "python", "browsing_agent.py", payload_str],
+        [
+            "pipenv",
+            "run",
+            "python",
+            "-u",
+            "browsing_agent.py",
+            payload_str,
+        ],  # Add `-u` flag
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        bufsize=1,  # Line buffered
+        bufsize=1,  # Line buffering
         universal_newlines=True,
     )
 
@@ -55,38 +62,30 @@ def start_and_stream(payload: dict):
     timeout_seconds = 60
 
     async def stream_generator():
-        """Streams the output of `browsing_agent.py`."""
-        yield f"data: Session {session_id} started.\n\n"
+        """Streams the output of `browsing_agent.py` in real-time."""
+        yield f"data: Session started.\n\n"
 
         while True:
-            elapsed = time.time() - start_time
+            # Read stdout and stderr asynchronously
+            stdout_task = asyncio.to_thread(process.stdout.readline)
+            stderr_task = asyncio.to_thread(process.stderr.readline)
 
-            # Read stdout asynchronously
-            stdout_line = await asyncio.to_thread(process.stdout.readline)
-            stderr_line = await asyncio.to_thread(process.stderr.readline)
+            # Wait for either stdout or stderr
+            done, pending = await asyncio.wait(
+                {stdout_task, stderr_task}, return_when=asyncio.FIRST_COMPLETED
+            )
 
-            if stdout_line:
-                yield f"data: {stdout_line.strip()}\n\n"
+            for task in done:
+                line = task.result().strip()
+                if line:
+                    yield f"data: {line}\n\n"
 
-            if stderr_line:
-                yield f"data: ERROR: {stderr_line.strip()}\n\n"
-
-            # If process has ended, break
+            # If process finished, break
             if process.poll() is not None:
                 yield "data: Task completed.\n\n"
                 break
 
-            # If timeout is reached, kill process
-            if elapsed > timeout_seconds:
-                yield "data: Task timed out after 60s, killing process...\n\n"
-                process.terminate()
-                try:
-                    process.wait(timeout=2)  # Give time to exit gracefully
-                except subprocess.TimeoutExpired:
-                    process.kill()  # Force kill if still running
-                break
-
-            await asyncio.sleep(0.05)  # Prevent CPU overuse
+            await asyncio.sleep(0.05)  # Avoid CPU overuse
 
         yield "event: close\ndata: end\n\n"
 
