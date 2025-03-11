@@ -138,10 +138,8 @@ def get_vnc(session_id: str):
 
     # Retrieve host information and VNC password from environment variables
     vnc_host = os.getenv("PUBLIC_DNS", "localhost")
-    vnc_port = 6081  # Adjust if noVNC is running on a different port
-    vnc_password = os.getenv(
-        "VNC_PASSWORD", "default_password"
-    )  # Set this in your environment
+    vnc_port = 6081  # Port for Chrome
+    vnc_password = os.getenv("VNC_PASSWORD", "12345678")  # Default Password
 
     html_content = f"""
     <html>
