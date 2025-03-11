@@ -137,7 +137,7 @@ def get_vnc(session_id: str):
         return {"error": "Session not found or expired"}
 
     # Retrieve host information and VNC password from environment variables
-    vnc_host = os.getenv("PUBLIC_DNS", "localhost")
+    vnc_host = os.getenv("PUBLIC_DNS", "52.86.72.216")  # Public DNS of the EC2 instance
     vnc_port = 6081  # Port for Chrome
     vnc_password = os.getenv("VNC_PASSWORD", "12345678")  # Default Password
 
