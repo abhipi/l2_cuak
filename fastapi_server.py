@@ -30,6 +30,9 @@ def health_check():
     return {"status": "ok"}
 
 
+###########################
+# Endpoint to Stream the Agent Payload
+###########################
 @app.post("/start")
 def start_and_stream(payload: dict):
     """Starts `browsing_agent.py` with the provided payload and streams its output."""
@@ -58,15 +61,12 @@ def start_and_stream(payload: dict):
         universal_newlines=True,
     )
 
-    start_time = time.time()
-    timeout_seconds = 60
-
     async def stream_generator():
         """Streams the output of `browsing_agent.py` in real-time and force-closes at 60s."""
-        yield f"data: Session started.\n\n"
+        yield f"data: Session started with ID: {session_id}.\n\n"
 
         start_time = time.time()
-        timeout_seconds = 60
+        timeout_seconds = 80  # Timeout after 80s
 
         while True:
             elapsed = time.time() - start_time
@@ -123,21 +123,55 @@ def start_and_stream(payload: dict):
 
 @app.get("/vnc/{session_id}")
 def get_vnc(session_id: str):
-    """Return an HTML page linking to the noVNC session."""
-
+    """
+    Return an HTML page embedding a noVNC viewer that auto-injects a VNC password.
+    Because of ALB sticky sessions, the user will connect to the same instance that started their job.
+    """
     if session_id not in SESSIONS:
         return {"error": "Session not found or expired"}
 
-    # Example noVNC link
-    vnc_url = f"http://{os.getenv('PUBLIC_DNS','localhost')}:6081/vnc.html"
+    # Retrieve host information and VNC password from environment variables
+    vnc_host = os.getenv("PUBLIC_DNS", "localhost")
+    vnc_port = 6081  # Adjust if noVNC is running on a different port
+    vnc_password = os.getenv(
+        "VNC_PASSWORD", "default_password"
+    )  # Set this in your environment
 
     html_content = f"""
     <html>
-        <head><title>NoVNC Session {session_id}</title></head>
-        <body>
-            <h3>NoVNC Connection for Session {session_id}</h3>
-            <p><a href="{vnc_url}" target="_blank">Open VNC</a></p>
-        </body>
+      <head>
+        <title>NoVNC Session {session_id}</title>
+        <!-- Load noVNC RFB client from a CDN (adjust version if needed) -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/noVNC/1.3.0/core/rfb.js"></script>
+        <script>
+          window.addEventListener("load", function() {{
+            // Create an RFB (Remote FrameBuffer) connection
+            // Adjust the protocol ("ws://" or "wss://") as needed.
+            var rfb = new RFB(document.getElementById('noVNC_canvas'), "ws://{vnc_host}:{vnc_port}", {{
+              credentials: {{
+                password: "{vnc_password}"
+              }}
+            }});
+            // Optional: Set view-only mode or other configuration options
+            rfb.viewOnly = false;
+          }});
+        </script>
+        <style>
+          html, body {{
+            height: 100%;
+            margin: 0;
+            padding: 0;
+          }}
+          #noVNC_canvas {{
+            width: 100%;
+            height: 100%;
+          }}
+        </style>
+      </head>
+      <body>
+        <h3>NoVNC Connection for Session {session_id}</h3>
+        <div id="noVNC_canvas"></div>
+      </body>
     </html>
     """
     return Response(content=html_content, media_type="text/html")
