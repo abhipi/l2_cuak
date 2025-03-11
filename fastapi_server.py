@@ -37,7 +37,7 @@ def start_and_stream(payload: dict):
 
     # Create a subprocess that we can read line-by-line
     process = subprocess.Popen(
-        ["python3", "browsing_agent.py", payload_str],
+        ["pipenv", "run", "python", "browsing_agent.py", payload_str],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
