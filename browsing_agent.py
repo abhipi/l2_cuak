@@ -28,8 +28,9 @@ llm = ChatOpenAI(model="gpt-4o")
 
 agent = Agent(
     # task="Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll down by one page - then scroll up by 100 pixels - then scroll down by 100 pixels - then scroll down by 10000 pixels.",
-    # task="Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll to the string 'The vast majority of computer'",
-    task="Go to delta.com and search for flights from Atlanta to Cabo from 13th to 18th March. Give it to me.",
+    task="Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll to the string 'The vast majority of computer'",
+    # FAILED!!
+    # task="Go to delta.com and search for flights from Atlanta to Cabo from 13th to 18th March. Give it to me.",
     llm=llm,
     browser=Browser(
         config=BrowserConfig(
