@@ -142,40 +142,53 @@ def get_vnc(session_id: str):
     vnc_password = os.getenv("VNC_PASSWORD", "12345678")  # Default Password
 
     html_content = f"""
-    <html>
-      <head>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>NoVNC Session {session_id}</title>
-        <!-- Load noVNC RFB client from a CDN (adjust version if needed) -->
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/noVNC/1.3.0/core/rfb.js"></script>
+
+        <!-- ✅ Load noVNC from official GitHub repository -->
+        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/app/ui.js"></script>
+        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js"></script>
+
         <script>
-          window.addEventListener("load", function() {{
-            // Create an RFB (Remote FrameBuffer) connection
-            // Adjust the protocol ("ws://" or "wss://") as needed.
-            var rfb = new RFB(document.getElementById('noVNC_canvas'), "ws://{vnc_host}:{vnc_port}", {{
-              credentials: {{
-                password: "{vnc_password}"
-              }}
+            document.addEventListener("DOMContentLoaded", function() {{
+                try {{
+                    const vncHost = "{vnc_host}";
+                    const vncPort = "{vnc_port}";
+                    const vncPassword = "{vnc_password}";
+                    const vncUrl = `ws://${{vncHost}}:${{vncPort}}`;
+
+                    console.log("🔍 Connecting to:", vncUrl);
+
+                    const rfb = new RFB(document.getElementById("noVNC_canvas"), vncUrl, {{
+                        credentials: {{
+                            password: vncPassword
+                        }}
+                    }});
+
+                    rfb.scaleViewport = true;
+                    rfb.viewOnly = false;
+
+                    rfb.addEventListener("connect", () => console.log("✅ VNC Connected"));
+                    rfb.addEventListener("disconnect", () => console.log("❌ VNC Disconnected"));
+                }} catch (error) {{
+                    console.error("🚨 VNC Connection Error:", error);
+                }}
             }});
-            // Optional: Set view-only mode or other configuration options
-            rfb.viewOnly = false;
-          }});
         </script>
+
         <style>
-          html, body {{
-            height: 100%;
-            margin: 0;
-            padding: 0;
-          }}
-          #noVNC_canvas {{
-            width: 100%;
-            height: 100%;
-          }}
+            html, body {{ height: 100%; margin: 0; padding: 0; background-color: black; }}
+            #noVNC_canvas {{ width: 100%; height: 100%; }}
         </style>
-      </head>
-      <body>
-        <h3>NoVNC Connection for Session {session_id}</h3>
+    </head>
+    <body>
+        <h3 style="color:white; text-align:center;">NoVNC Connection for Session {session_id}</h3>
         <div id="noVNC_canvas"></div>
-      </body>
+    </body>
     </html>
     """
     return Response(content=html_content, media_type="text/html")
