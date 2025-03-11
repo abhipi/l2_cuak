@@ -32,86 +32,58 @@ def health_check():
 
 @app.post("/start")
 def start_and_stream(payload: dict):
-    """
-    Starts `browsing_agent.py` with the provided payload
-    and streams its output for up to 60 seconds.
-
-    Returns a Server-Sent Events (SSE) stream:
-      - Each line of script output is sent as 'data: ...\n\n'
-      - If 60s elapse, we terminate the script and end the stream.
-      - Also returns a unique session_id and a link to a VNC page.
-    """
     session_id = str(uuid.uuid4())
-    payload["session_id"] = session_id
-    payload_json = json.dumps(payload)
+    payload_str = json.dumps(payload)
 
-    # Start the script in a separate process group
+    # Create a subprocess that we can read line-by-line
     process = subprocess.Popen(
-        ["python3", "browsing_agent.py", payload_json],
+        ["python3", "browsing_agent.py", payload_str],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        bufsize=1,  # Line buffering
+        bufsize=1,  # Line buffered
         universal_newlines=True,
-        preexec_fn=os.setsid,  # Makes it a process group for clean termination
     )
 
-    # Store session info
-    SESSIONS[session_id] = {
-        "process": process,
-        "start_time": time.time(),
-        "payload": payload,
-    }
+    start_time = time.time()
+    timeout_seconds = 60
 
-    vnc_url = f"http://{os.getenv('PUBLIC_DNS','localhost')}:6081/vnc.html"
+    async def stream_generator():
+        # Stream until process ends or 60s pass
+        while True:
+            elapsed = time.time() - start_time
 
-    async def event_stream():
-        start_time = time.time()
-        timeout_seconds = 60
-        yield f"data: Session started: {session_id}\n\n"
-        yield f"data: Access VNC at: {vnc_url}\n\n"
+            # Read one line (if any) from stdout
+            line = await asyncio.to_thread(process.stdout.readline)
+            # Read any errors
+            err_line = await asyncio.to_thread(process.stderr.readline)
 
-        try:
-            while True:
-                elapsed = time.time() - start_time
+            # If we got a normal line, yield it immediately
+            if line:
+                yield f"data: {line.rstrip()}\n\n"
 
-                # Read stdout asynchronously
-                stdout_line = await asyncio.to_thread(process.stdout.readline)
-                stderr_line = await asyncio.to_thread(process.stderr.readline)
+            # If we got an error line, yield that too
+            if err_line:
+                yield f"data: ERROR: {err_line.rstrip()}\n\n"
 
-                if stdout_line:
-                    yield f"data: {stdout_line.strip()}\n\n"
-                if stderr_line:
-                    yield f"data: ERROR: {stderr_line.strip()}\n\n"
+            # If the process ended, break
+            if process.poll() is not None:
+                yield "data: Task completed.\n\n"
+                break
 
-                # If process has ended, break
-                if process.poll() is not None:
-                    yield "data: Task completed.\n\n"
-                    break
+            # If we've timed out, kill the process
+            if elapsed > timeout_seconds:
+                yield "data: Task timed out after 60s, killing process.\n\n"
+                process.kill()
+                break
 
-                # Check timeout
-                if elapsed > timeout_seconds:
-                    yield "data: Task timed out after 60 seconds. Killing process...\n\n"
-                    os.killpg(
-                        os.getpgid(process.pid), signal.SIGTERM
-                    )  # Kill entire process group
-                    await asyncio.sleep(1)  # Allow time for cleanup
-                    if process.poll() is None:  # If still running, force kill
-                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    break
+            # Pause slightly to avoid spinning the CPU
+            await asyncio.sleep(0.05)
 
-                await asyncio.sleep(0.1)  # Prevent CPU overload
+        # End SSE
+        yield "event: close\ndata: end\n\n"
 
-        except Exception as e:
-            yield f"data: ERROR: {str(e)}\n\n"
-
-        finally:
-            # Ensure process is killed in all cases
-            if process.poll() is None:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            yield "event: close\ndata: end\n\n"
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
 @app.get("/vnc/{session_id}")
