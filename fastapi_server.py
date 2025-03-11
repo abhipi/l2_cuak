@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import subprocess
@@ -32,8 +32,14 @@ def health_check():
 
 @app.post("/start")
 def start_and_stream(payload: dict):
+    """Starts `browsing_agent.py` with the provided payload and streams its output."""
+
     session_id = str(uuid.uuid4())
-    payload_str = json.dumps(payload)
+
+    # Ensure JSON is properly formatted
+    payload_str = json.dumps(
+        payload, separators=(",", ":")
+    )  # Ensures valid JSON without unnecessary whitespace
 
     # Create a subprocess that we can read line-by-line
     process = subprocess.Popen(
@@ -49,38 +55,39 @@ def start_and_stream(payload: dict):
     timeout_seconds = 60
 
     async def stream_generator():
-        # Stream until process ends or 60s pass
+        """Streams the output of `browsing_agent.py`."""
+        yield f"data: Session {session_id} started.\n\n"
+
         while True:
             elapsed = time.time() - start_time
 
-            # Read one line (if any) from stdout
-            line = await asyncio.to_thread(process.stdout.readline)
-            # Read any errors
-            err_line = await asyncio.to_thread(process.stderr.readline)
+            # Read stdout asynchronously
+            stdout_line = await asyncio.to_thread(process.stdout.readline)
+            stderr_line = await asyncio.to_thread(process.stderr.readline)
 
-            # If we got a normal line, yield it immediately
-            if line:
-                yield f"data: {line.rstrip()}\n\n"
+            if stdout_line:
+                yield f"data: {stdout_line.strip()}\n\n"
 
-            # If we got an error line, yield that too
-            if err_line:
-                yield f"data: ERROR: {err_line.rstrip()}\n\n"
+            if stderr_line:
+                yield f"data: ERROR: {stderr_line.strip()}\n\n"
 
-            # If the process ended, break
+            # If process has ended, break
             if process.poll() is not None:
                 yield "data: Task completed.\n\n"
                 break
 
-            # If we've timed out, kill the process
+            # If timeout is reached, kill process
             if elapsed > timeout_seconds:
-                yield "data: Task timed out after 60s, killing process.\n\n"
-                process.kill()
+                yield "data: Task timed out after 60s, killing process...\n\n"
+                process.terminate()
+                try:
+                    process.wait(timeout=2)  # Give time to exit gracefully
+                except subprocess.TimeoutExpired:
+                    process.kill()  # Force kill if still running
                 break
 
-            # Pause slightly to avoid spinning the CPU
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.05)  # Prevent CPU overuse
 
-        # End SSE
         yield "event: close\ndata: end\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
@@ -88,11 +95,8 @@ def start_and_stream(payload: dict):
 
 @app.get("/vnc/{session_id}")
 def get_vnc(session_id: str):
-    """
-    Return an HTML page linking to the noVNC session.
-    Because of ALB sticky sessions, the user
-    must land on the same instance that started their job.
-    """
+    """Return an HTML page linking to the noVNC session."""
+
     if session_id not in SESSIONS:
         return {"error": "Session not found or expired"}
 
