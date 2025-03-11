@@ -39,6 +39,9 @@ def start_and_stream(payload: dict):
 
     session_id = str(uuid.uuid4())
 
+    session_id = str(uuid.uuid4())  # Generate session ID
+    SESSIONS[session_id] = {"start_time": time.time()}  # Store session info
+
     # Ensure JSON is properly formatted
     payload_str = json.dumps(
         payload, separators=(",", ":")
@@ -68,55 +71,58 @@ def start_and_stream(payload: dict):
         start_time = time.time()
         timeout_seconds = 80  # Timeout after 80s
 
-        while True:
-            elapsed = time.time() - start_time
+        try:
+            while True:
+                elapsed = time.time() - start_time
 
-            # Create tasks for reading stdout and stderr
-            stdout_task = asyncio.create_task(
-                asyncio.to_thread(process.stdout.readline)
-            )
-            stderr_task = asyncio.create_task(
-                asyncio.to_thread(process.stderr.readline)
-            )
+                # Create tasks for reading stdout and stderr
+                stdout_task = asyncio.create_task(
+                    asyncio.to_thread(process.stdout.readline)
+                )
+                stderr_task = asyncio.create_task(
+                    asyncio.to_thread(process.stderr.readline)
+                )
 
-            # Wait for either stdout or stderr to be ready, or timeout after 0.1s
-            done, pending = await asyncio.wait(
-                {stdout_task, stderr_task},
-                timeout=0.1,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+                # Wait for either stdout or stderr to be ready, or timeout after 0.1s
+                done, pending = await asyncio.wait(
+                    {stdout_task, stderr_task},
+                    timeout=0.1,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-            # Process completed tasks
-            for task in done:
-                line = task.result().strip()
-                if line:
-                    yield f"data: {line}\n\n"
+                # Process completed tasks
+                for task in done:
+                    line = task.result().strip()
+                    if line:
+                        yield f"data: {line}\n\n"
 
-            # Cancel any pending tasks to avoid resource leaks
-            for task in pending:
-                task.cancel()
+                # Cancel any pending tasks to avoid resource leaks
+                for task in pending:
+                    task.cancel()
 
-            # Check if timeout has been reached
-            if elapsed > timeout_seconds:
-                yield "data: Task timed out after 60s, killing process...\n\n"
-                process.terminate()  # Attempt graceful shutdown
-                try:
-                    process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    process.kill()  # Force kill if still running
-                yield "event: close\ndata: end\n\n"
-                return  # Exit the generator immediately
+                # Check if timeout has been reached
+                if elapsed > timeout_seconds:
+                    yield "data: Task timed out after 60s, killing process...\n\n"
+                    process.terminate()  # Attempt graceful shutdown
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()  # Force kill if still running
+                    yield "event: close\ndata: end\n\n"
+                    return  # Exit the generator immediately
 
-            # Check if the process finished naturally
-            if process.poll() is not None:
-                yield "data: Task completed.\n\n"
-                yield "event: close\ndata: end\n\n"
-                return  # Exit the generator immediately
+                # Check if the process finished naturally
+                if process.poll() is not None:
+                    yield "data: Task completed.\n\n"
+                    yield "event: close\ndata: end\n\n"
+                    return  # Exit the generator immediately
 
-            # Brief sleep to avoid high CPU usage
-            await asyncio.sleep(0.05)
-
-        yield "event: close\ndata: end\n\n"
+                # Brief sleep to avoid high CPU usage
+                await asyncio.sleep(0.05)
+        finally:
+            if session_id in SESSIONS:
+                del SESSIONS[session_id]
+                print(f"Session {session_id} removed from SESSIONS.")
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
