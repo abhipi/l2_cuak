@@ -45,12 +45,14 @@ def start_and_stream(payload: dict):
     payload["session_id"] = session_id
     payload_json = json.dumps(payload)
 
-    # Start the script
+    # Start the script in a separate process group
     process = subprocess.Popen(
         ["python3", "browsing_agent.py", payload_json],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        bufsize=1,  # Line buffering
+        universal_newlines=True,
         preexec_fn=os.setsid,  # Makes it a process group for clean termination
     )
 
@@ -69,35 +71,45 @@ def start_and_stream(payload: dict):
         yield f"data: Session started: {session_id}\n\n"
         yield f"data: Access VNC at: {vnc_url}\n\n"
 
-        while True:
-            # Read both stdout and stderr
-            stdout_line = process.stdout.readline()
-            stderr_line = process.stderr.readline()
-            elapsed = time.time() - start_time
+        try:
+            while True:
+                elapsed = time.time() - start_time
 
-            # Send stdout
-            if stdout_line:
-                yield f"data: {stdout_line.rstrip()}\n\n"
-            # Send stderr
-            if stderr_line:
-                yield f"data: ERROR: {stderr_line.rstrip()}\n\n"
+                # Read stdout asynchronously
+                stdout_line = await asyncio.to_thread(process.stdout.readline)
+                stderr_line = await asyncio.to_thread(process.stderr.readline)
 
-            # If process finishes, stop
-            if process.poll() is not None:
-                yield "data: Task completed.\n\n"
-                break
+                if stdout_line:
+                    yield f"data: {stdout_line.strip()}\n\n"
+                if stderr_line:
+                    yield f"data: ERROR: {stderr_line.strip()}\n\n"
 
-            # Check timeout (if > 60s, kill process)
-            if elapsed > timeout_seconds:
-                yield "data: Task timed out after 60 seconds. Killing process...\n\n"
-                os.killpg(
-                    os.getpgid(process.pid), signal.SIGTERM
-                )  # Kill entire process group
-                break
+                # If process has ended, break
+                if process.poll() is not None:
+                    yield "data: Task completed.\n\n"
+                    break
 
-            await asyncio.sleep(0.1)
+                # Check timeout
+                if elapsed > timeout_seconds:
+                    yield "data: Task timed out after 60 seconds. Killing process...\n\n"
+                    os.killpg(
+                        os.getpgid(process.pid), signal.SIGTERM
+                    )  # Kill entire process group
+                    await asyncio.sleep(1)  # Allow time for cleanup
+                    if process.poll() is None:  # If still running, force kill
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    break
 
-        yield "event: close\ndata: end\n\n"
+                await asyncio.sleep(0.1)  # Prevent CPU overload
+
+        except Exception as e:
+            yield f"data: ERROR: {str(e)}\n\n"
+
+        finally:
+            # Ensure process is killed in all cases
+            if process.poll() is None:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            yield "event: close\ndata: end\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
