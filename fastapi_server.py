@@ -66,9 +66,13 @@ def start_and_stream(payload: dict):
         yield f"data: Session started.\n\n"
 
         while True:
-            # Read stdout and stderr asynchronously
-            stdout_task = asyncio.to_thread(process.stdout.readline)
-            stderr_task = asyncio.to_thread(process.stderr.readline)
+            # Create tasks instead of coroutines
+            stdout_task = asyncio.create_task(
+                asyncio.to_thread(process.stdout.readline)
+            )
+            stderr_task = asyncio.create_task(
+                asyncio.to_thread(process.stderr.readline)
+            )
 
             # Wait for either stdout or stderr
             done, pending = await asyncio.wait(
@@ -80,12 +84,16 @@ def start_and_stream(payload: dict):
                 if line:
                     yield f"data: {line}\n\n"
 
+            # Cancel any unfinished tasks to avoid memory leaks
+            for task in pending:
+                task.cancel()
+
             # If process finished, break
             if process.poll() is not None:
                 yield "data: Task completed.\n\n"
                 break
 
-            await asyncio.sleep(0.05)  # Avoid CPU overuse
+            await asyncio.sleep(0.05)  # Prevent CPU overuse
 
         yield "event: close\ndata: end\n\n"
 
