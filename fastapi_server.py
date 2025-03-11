@@ -149,18 +149,18 @@ def get_vnc(session_id: str):
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>NoVNC Session {session_id}</title>
 
-        <!-- ✅ Load noVNC scripts correctly -->
-        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/app/ui.js"></script>
-        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js" defer></script>
+        <!-- ✅ Load noVNC from a stable CDN -->
+        <script src="https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js"></script>
 
         <script>
             function initNoVNC() {{
-                if (typeof RFB === "undefined") {{
-                    console.error("🚨 ERROR: RFB is not defined! Check if the script loaded correctly.");
-                    return;
-                }}
-
                 try {{
+                    // Ensure RFB is loaded before executing
+                    if (typeof RFB === "undefined") {{
+                        console.error("🚨 ERROR: RFB is not defined! The script failed to load.");
+                        return;
+                    }}
+
                     const vncHost = "{vnc_host}";
                     const vncPort = "{vnc_port}";
                     const vncPassword = "{vnc_password}";
@@ -185,10 +185,8 @@ def get_vnc(session_id: str):
                 }}
             }}
 
-            // Ensure scripts are loaded before initializing noVNC
-            document.addEventListener("DOMContentLoaded", function() {{
-                setTimeout(initNoVNC, 500);  // Delay initialization to allow script loading
-            }});
+            // Ensure the script loads before calling initNoVNC()
+            document.addEventListener("DOMContentLoaded", initNoVNC);
         </script>
 
         <style>
