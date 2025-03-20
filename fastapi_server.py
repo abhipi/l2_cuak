@@ -53,19 +53,17 @@ def health_check():
 ###########################
 def get_instance_public_hostname():
     """
-    UPDATE: localhost fallback for local testing (BROWSER CONTAINER ON VM).
     Attempt to fetch the AWS EC2 public hostname via metadata.
     Fallback to localhost if not available or not on AWS.
     """
-    # try:
-    #     response = requests.get(
-    #         "http://169.254.169.254/latest/meta-data/public-hostname", timeout=2
-    #     )
-    #     if response.status_code == 200:
-    #         return response.text.strip()
-    # except Exception as e:
-    #     print("Error retrieving instance public hostname:", e)
-
+    try:
+        response = requests.get(
+            "http://169.254.169.254/latest/meta-data/public-hostname", timeout=2
+        )
+        if response.status_code == 200:
+            return response.text.strip()
+    except Exception as e:
+        print("Error retrieving instance public hostname:", e)
     return "localhost"
 
 
@@ -115,7 +113,10 @@ def start_and_stream(payload: dict):
 
     # 3) Construct the CDP URL; often "ws://HOST:CDP_PORT/devtools/browser"
     #    But you may need to adjust the path if your container expects a certain path.
-    host_for_cdp = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
+    # Set to localhost as the browser container is on the same VM
+    host_for_cdp = (
+        "localhost"  # os.getenv("PUBLIC_DNS", get_instance_public_hostname())
+    )
     cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"
     # Insert the cdp_url into the payload so browsing_agent.py can use it
     payload["cdp_url"] = cdp_url
@@ -224,34 +225,135 @@ def start_and_stream(payload: dict):
 ###########################
 # VNC Endpoint
 ###########################
-from fastapi.responses import RedirectResponse
-
-
 @app.get("/vnc/{session_id}")
 def get_vnc(session_id: str):
     """
-    Redirects the user to the native noVNC frontend (`/vnc.html`)
-    served by the container on the dynamically mapped port.
+    Returns an HTML page embedding a noVNC viewer using the ephemeral port
+    assigned to the container for this session.
     """
+
     if session_id not in SESSIONS:
         return {"error": "Session not found or expired"}
 
+    # Retrieve container & ephemeral port info
     session_data = SESSIONS[session_id]
     container_id = session_data["container_id"]
 
-    # Reload container info to get port mappings
+    # Reload container to ensure we have the latest port mapping
     container = docker_client.containers.get(container_id)
     container.reload()
     ports_info = container.attrs["NetworkSettings"]["Ports"]
 
-    # Get the dynamically mapped port for noVNC (6080)
+    # Get the ephemeral port for noVNC (6080 -> e.g. 49160)
     no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
 
+    # Build the final host.
+    # If you're on AWS, we attempt to get the public DNS, otherwise fallback to localhost.
     vnc_host = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
 
-    # Redirect to /vnc.html on that dynamic port
-    redirect_url = f"http://44.195.135.191:{no_vnc_port_mapping}/vnc.html"  # Manually set IP (Change)
-    return RedirectResponse(url=redirect_url)
+    # Use the same password the container expects (may be from env)
+    vnc_password = os.getenv("VNC_PASSWORD", "12345678")
+
+    # Construct an HTML page that references the correct noVNC websocket
+    # We use the ephemeral port in place of 6081 or 6080
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NoVNC Session {session_id}</title>
+    <style>
+        body {{
+            margin: 0;
+            background-color: dimgrey;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }}
+        html {{
+            height: 100%;
+        }}
+        #top_bar {{
+            background-color: #6e84a3;
+            color: white;
+            font: bold 12px Helvetica;
+            padding: 6px 5px 4px 5px;
+            border-bottom: 1px outset;
+        }}
+        #status {{
+            text-align: center;
+        }}
+        #sendCtrlAltDelButton {{
+            position: fixed;
+            top: 0px;
+            right: 0px;
+            border: 1px outset;
+            padding: 5px;
+            cursor: pointer;
+        }}
+        #screen {{
+            flex: 1;
+            overflow: hidden;
+        }}
+    </style>
+    <!-- Import noVNC's RFB module from a stable CDN (master branch) -->
+    <script type="module">
+        import RFB from 'https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js';
+
+        function status(text) {{
+            document.getElementById('status').textContent = text;
+        }}
+
+        // Ctrl+Alt+Del button
+        document.addEventListener("DOMContentLoaded", function() {{
+            document.getElementById('sendCtrlAltDelButton').onclick = function() {{
+                if (rfb) {{
+                    rfb.sendCtrlAltDel();
+                }}
+            }};
+        }});
+
+        const host = "{vnc_host}";
+        const port = "{no_vnc_port_mapping}";
+        const password = "{vnc_password}";
+        const path = "websockify";  // Adjust if your container uses a different path
+
+        let url;
+        if (window.location.protocol === "https:") {{
+            url = 'wss://';
+        }} else {{
+            url = 'ws://';
+        }}
+        url += host + ":" + port + "/" + path;
+
+        let rfb;
+        document.addEventListener("DOMContentLoaded", () => {{
+            status("Connecting");
+            try {{
+                rfb = new RFB(document.getElementById('screen'), url, {{
+                    credentials: {{ password: password }}
+                }});
+                rfb.addEventListener("connect", () => status("Connected to VNC"));
+                rfb.addEventListener("disconnect", () => status("Disconnected"));
+                rfb.viewOnly = false;
+                rfb.scaleViewport = true;
+            }} catch (err) {{
+                console.error("VNC Connection Error:", err);
+                status("Error: " + err);
+            }}
+        }});
+    </script>
+</head>
+<body>
+    <div id="top_bar">
+        <div id="status">Loading</div>
+        <div id="sendCtrlAltDelButton">Send CtrlAltDel</div>
+    </div>
+    <div id="screen"></div>
+</body>
+</html>
+"""
+    return Response(content=html_content, media_type="text/html")
 
 
 ###########################
