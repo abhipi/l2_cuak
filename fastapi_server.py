@@ -250,7 +250,7 @@ def get_vnc(session_id: str):
     vnc_host = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
 
     # Redirect to /vnc.html on that dynamic port
-    redirect_url = f"http://{vnc_host}:{no_vnc_port_mapping}/vnc.html"
+    redirect_url = f"http://44.195.135.191:{no_vnc_port_mapping}/vnc.html"  # Manually set IP (Change)
     return RedirectResponse(url=redirect_url)
 
 
