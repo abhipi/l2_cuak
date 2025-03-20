@@ -1,15 +1,15 @@
+# Update (03/20/2025- CDP URL is now passed as a parameter in the JSON payload for containerized chrome)
 import os
 import sys
 import asyncio
 import json
 
-# Make sure these imports match your actual project structure
+# Add parent directory to the Python path if needed
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langchain_openai import ChatOpenAI
 from browser_use import Agent
 from dotenv import load_dotenv
-
 from browser_use.browser.browser import Browser, BrowserConfig
 
 # ------------------------------------------------------------------------------
@@ -25,27 +25,27 @@ if not os.getenv("OPENAI_API_KEY"):
 # ------------------------------------------------------------------------------
 def parse_payload_from_argv():
     """
-    Reads the first argument from sys.argv and tries to parse it as JSON.
-    Fallback: If it's not valid JSON, treat it as a string containing the 'task'.
-
-    Example call:
-      python browsing_agent.py '{"task": "Go to https://google.com and scroll down"}'
-    or
-      python browsing_agent.py "Go to https://google.com and scroll down"
+    Reads the first argument from sys.argv and parses as JSON.
+    Supports:
+      python browsing_agent.py '{"task": "...", "cdp_url": "..."}'
     """
     if len(sys.argv) < 2:
-        # No payload passed in, use a default
         return {
-            "task": "Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll to a specific string."
+            "task": "Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll to a specific string.",
+            "cdp_url": os.getenv("CDP_URL", "http://localhost:9333"),
         }
 
     payload_str = sys.argv[1]
     try:
         payload = json.loads(payload_str)
-        # Expecting something like: {"task": "...", "model": "..."}
     except json.JSONDecodeError:
-        # Not valid JSON, assume the entire string is the task
-        payload = {"task": payload_str}
+        payload = {
+            "task": payload_str,
+            "cdp_url": os.getenv("CDP_URL", "http://localhost:9333"),
+        }
+
+    if "cdp_url" not in payload:
+        payload["cdp_url"] = os.getenv("CDP_URL", "http://localhost:9333")
 
     return payload
 
@@ -54,25 +54,26 @@ def parse_payload_from_argv():
 # Main Logic
 # ------------------------------------------------------------------------------
 async def main():
-    # 1. Parse payload
+    # Parse payload from argument
     payload = parse_payload_from_argv()
     task_text = payload.get("task", "")
-    model_name = payload.get("model", "gpt-4o")  # default to your GPT-4 alias
+    model_name = payload.get("model", "gpt-4o")  # default fallback
+    cdp_url = payload.get("cdp_url", "http://localhost:9333")
 
-    # 2. Initialize LLM and Agent
+    # Initialize LLM and Agent
     llm = ChatOpenAI(model=model_name)
     agent = Agent(
         task=task_text,
         llm=llm,
         browser=Browser(
             config=BrowserConfig(
-                headless=False,  # or True, if you want a headless browser
-                chrome_instance_path="/usr/bin/google-chrome",  # Adjust for your environment
+                headless=False,
+                cdp_url=cdp_url,  # Pulled from JSON payload
             )
         ),
     )
 
-    # 3. Run the agent
+    # Run the agent
     await agent.run()
 
 
