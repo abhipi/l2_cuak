@@ -315,7 +315,6 @@ def get_vnc(session_id: str):
         const host = "{vnc_host}";
         const port = "{no_vnc_port_mapping}";
         const password = "{vnc_password}";
-        const path = "websockify";  // Adjust if your container uses a different path
 
         let url;
         if (window.location.protocol === "https:") {{
