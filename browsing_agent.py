@@ -68,7 +68,7 @@ async def main():
         browser=Browser(
             config=BrowserConfig(
                 headless=False,
-                cdp_url=cdp_url,  # Pulled from JSON payload
+                wss_url=cdp_url,  # Pulled from JSON payload
             )
         ),
     )
