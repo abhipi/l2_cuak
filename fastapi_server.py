@@ -224,134 +224,34 @@ def start_and_stream(payload: dict):
 ###########################
 # VNC Endpoint
 ###########################
+from fastapi.responses import RedirectResponse
+
+
 @app.get("/vnc/{session_id}")
 def get_vnc(session_id: str):
     """
-    Returns an HTML page embedding a noVNC viewer using the ephemeral port
-    assigned to the container for this session.
+    Redirects the user to the native noVNC frontend (`/vnc.html`)
+    served by the container on the dynamically mapped port.
     """
-
     if session_id not in SESSIONS:
         return {"error": "Session not found or expired"}
 
-    # Retrieve container & ephemeral port info
     session_data = SESSIONS[session_id]
     container_id = session_data["container_id"]
 
-    # Reload container to ensure we have the latest port mapping
+    # Reload container info to get port mappings
     container = docker_client.containers.get(container_id)
     container.reload()
     ports_info = container.attrs["NetworkSettings"]["Ports"]
 
-    # Get the ephemeral port for noVNC (6080 -> e.g. 49160)
+    # Get the dynamically mapped port for noVNC (6080)
     no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
 
-    # Build the final host.
-    # If you're on AWS, we attempt to get the public DNS, otherwise fallback to localhost.
     vnc_host = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
 
-    # Use the same password the container expects (may be from env)
-    vnc_password = os.getenv("VNC_PASSWORD", "12345678")
-
-    # Construct an HTML page that references the correct noVNC websocket
-    # We use the ephemeral port in place of 6081 or 6080
-    html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NoVNC Session {session_id}</title>
-    <style>
-        body {{
-            margin: 0;
-            background-color: dimgrey;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        }}
-        html {{
-            height: 100%;
-        }}
-        #top_bar {{
-            background-color: #6e84a3;
-            color: white;
-            font: bold 12px Helvetica;
-            padding: 6px 5px 4px 5px;
-            border-bottom: 1px outset;
-        }}
-        #status {{
-            text-align: center;
-        }}
-        #sendCtrlAltDelButton {{
-            position: fixed;
-            top: 0px;
-            right: 0px;
-            border: 1px outset;
-            padding: 5px;
-            cursor: pointer;
-        }}
-        #screen {{
-            flex: 1;
-            overflow: hidden;
-        }}
-    </style>
-    <!-- Import noVNC's RFB module from a stable CDN (master branch) -->
-    <script type="module">
-        import RFB from 'https://cdn.jsdelivr.net/gh/novnc/noVNC@master/core/rfb.js';
-
-        function status(text) {{
-            document.getElementById('status').textContent = text;
-        }}
-
-        // Ctrl+Alt+Del button
-        document.addEventListener("DOMContentLoaded", function() {{
-            document.getElementById('sendCtrlAltDelButton').onclick = function() {{
-                if (rfb) {{
-                    rfb.sendCtrlAltDel();
-                }}
-            }};
-        }});
-
-        const host = "{vnc_host}";
-        const port = "{no_vnc_port_mapping}";
-        const password = "{vnc_password}";
-
-        let url;
-        if (window.location.protocol === "https:") {{
-            url = 'wss://';
-        }} else {{
-            url = 'ws://';
-        }}
-        url += host + ":" + port + "/" + path;
-
-        let rfb;
-        document.addEventListener("DOMContentLoaded", () => {{
-            status("Connecting");
-            try {{
-                rfb = new RFB(document.getElementById('screen'), url, {{
-                    credentials: {{ password: password }}
-                }});
-                rfb.addEventListener("connect", () => status("Connected to VNC"));
-                rfb.addEventListener("disconnect", () => status("Disconnected"));
-                rfb.viewOnly = false;
-                rfb.scaleViewport = true;
-            }} catch (err) {{
-                console.error("VNC Connection Error:", err);
-                status("Error: " + err);
-            }}
-        }});
-    </script>
-</head>
-<body>
-    <div id="top_bar">
-        <div id="status">Loading</div>
-        <div id="sendCtrlAltDelButton">Send CtrlAltDel</div>
-    </div>
-    <div id="screen"></div>
-</body>
-</html>
-"""
-    return Response(content=html_content, media_type="text/html")
+    # Redirect to /vnc.html on that dynamic port
+    redirect_url = f"http://{vnc_host}:{no_vnc_port_mapping}/vnc.html"
+    return RedirectResponse(url=redirect_url)
 
 
 ###########################
