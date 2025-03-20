@@ -101,7 +101,7 @@ def start_and_stream(payload: dict):
     )
 
     # Give the container a moment to spin up (optional, depends on image startup time)
-    time.sleep(2)
+    time.sleep(3)
 
     # 2) Retrieve ephemeral ports from container
     container.reload()  # Refresh container.attrs
@@ -116,16 +116,27 @@ def start_and_stream(payload: dict):
     #    But you may need to adjust the path if your container expects a certain path.
     host_for_cdp = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
     cdp_discovery_url = f"http://{host_for_cdp}:{cdp_port_mapping}/json/version"
-    response = requests.get(cdp_discovery_url)
-    response.raise_for_status()
+    # Wait for Chrome container to spin up
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            print(f"Attempt {attempt} to fetch DevTools endpoint...")
+            response = requests.get(cdp_discovery_url)
+            response.raise_for_status()
+            cdp_ws_url = response.json().get("webSocketDebuggerUrl")
+            cdp_ws_url = cdp_ws_url.replace("localhost", host_for_cdp)
+            print(f"DevTools endpoint found: {cdp_ws_url}")
+            break
+        except Exception as e:
+            wait_time = attempt * 2
+            print(f"Attempt {attempt} failed: {e}. Retrying in {wait_time} seconds...")
+            time.sleep(wait_time)
+    else:
+        raise RuntimeError(
+            f"Could not connect to DevTools after {max_attempts} attempts."
+        )
 
-    # Extract the ws URL from the response
-    cdp_ws_url = response.json().get("webSocketDebuggerUrl")
-
-    # Replace localhost with actual public DNS
-    cdp_ws_url = cdp_ws_url.replace("localhost", host_for_cdp)
-
-    # Add to payload
+    # Add the working WebSocket URL to the payload
     payload["cdp_url"] = cdp_ws_url
 
     # 4) Store session data in SESSIONS
