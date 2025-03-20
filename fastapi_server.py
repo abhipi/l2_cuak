@@ -53,17 +53,18 @@ def health_check():
 ###########################
 def get_instance_public_hostname():
     """
+    UPDATE: RETURNING localhost for local testing.
     Attempt to fetch the AWS EC2 public hostname via metadata.
     Fallback to localhost if not available or not on AWS.
     """
-    try:
-        response = requests.get(
-            "http://169.254.169.254/latest/meta-data/public-hostname", timeout=2
-        )
-        if response.status_code == 200:
-            return response.text.strip()
-    except Exception as e:
-        print("Error retrieving instance public hostname:", e)
+    # try:
+    #     response = requests.get(
+    #         "http://169.254.169.254/latest/meta-data/public-hostname", timeout=2
+    #     )
+    #     if response.status_code == 200:
+    #         return response.text.strip()
+    # except Exception as e:
+    #     print("Error retrieving instance public hostname:", e)
 
     return "localhost"
 
@@ -117,7 +118,7 @@ def start_and_stream(payload: dict):
     host_for_cdp = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
     cdp_discovery_url = f"http://{host_for_cdp}:{cdp_port_mapping}/json/version"
     # Wait for Chrome container to spin up
-    max_attempts = 5
+    max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
             print(f"Attempt {attempt} to fetch DevTools endpoint...")
@@ -171,7 +172,7 @@ def start_and_stream(payload: dict):
     # 6) Define the streaming generator
     async def stream_generator():
         yield f"data: Session started with ID: {session_id}. Container: {container_name}\n\n"
-        yield f"data: cdp_url: {cdp_url}\n\n"
+        yield f"data: cdp_url: {cdp_ws_url}\n\n"
 
         start_time = time.time()
 
