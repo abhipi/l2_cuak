@@ -115,10 +115,18 @@ def start_and_stream(payload: dict):
     # 3) Construct the CDP URL; often "ws://HOST:CDP_PORT/devtools/browser"
     #    But you may need to adjust the path if your container expects a certain path.
     host_for_cdp = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
-    cdp_url = f"ws://{host_for_cdp}:{cdp_port_mapping}"
+    cdp_discovery_url = f"http://{host_for_cdp}:{cdp_port_mapping}/json/version"
+    response = requests.get(cdp_discovery_url)
+    response.raise_for_status()
 
-    # Insert the cdp_url into the payload so browsing_agent.py can use it
-    payload["cdp_url"] = cdp_url
+    # Extract the ws URL from the response
+    cdp_ws_url = response.json().get("webSocketDebuggerUrl")
+
+    # Replace localhost with actual public DNS
+    cdp_ws_url = cdp_ws_url.replace("localhost", host_for_cdp)
+
+    # Add to payload
+    payload["cdp_url"] = cdp_ws_url
 
     # 4) Store session data in SESSIONS
     SESSIONS[session_id] = {
