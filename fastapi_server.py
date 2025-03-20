@@ -115,7 +115,7 @@ def start_and_stream(payload: dict):
     # 3) Construct the CDP URL; often "ws://HOST:CDP_PORT/devtools/browser"
     #    But you may need to adjust the path if your container expects a certain path.
     host_for_cdp = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
-    cdp_url = f"ws://{host_for_cdp}:{cdp_port_mapping}"
+    cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"  # Updated for playwright
 
     # Insert the cdp_url into the payload so browsing_agent.py can use it
     payload["cdp_url"] = cdp_url
