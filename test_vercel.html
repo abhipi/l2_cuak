@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Start and Connect VNC Session</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #streamOutput { white-space: pre-line; border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; margin-top: 20px; }
+        button { padding: 10px 20px; font-size: 16px; margin-right: 10px; }
+        input, textarea { width: 100%; padding: 8px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Start VNC Browsing Agent</h1>
+    <form id="taskForm">
+        <label for="task">Enter task description:</label>
+        <textarea id="task" name="task" rows="4" placeholder="Describe the browsing task..."></textarea>
+        <button type="submit">Start Session & Open Stream</button>
+    </form>
+
+    <div id="vncButtonContainer"></div>
+
+    <script>
+        const vercelAgentUrl = 'https://vercel-agents.vercel.app/browser_agent'; // Replace with your serverless endpoint
+
+        document.getElementById('taskForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const taskDescription = document.getElementById('task').value;
+
+            // Open a new window for streaming output
+            const streamWindow = window.open('', '_blank', 'width=800,height=600');
+            streamWindow.document.write('<pre id="streamOutput">Starting session...\n</pre>');
+
+            fetch(vercelAgentUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    protocol: 'data',
+                    task: taskDescription,
+                    user_context: ''
+                })
+            }).then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let sessionId = null;
+
+                (async function readStream() {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value);
+                        streamWindow.document.getElementById('streamOutput').textContent += chunk;
+                        streamWindow.scrollTo(0, streamWindow.document.body.scrollHeight);
+
+                        if (chunk.includes('VNC_URL:')) {
+                            const vncUrl = chunk.split('VNC_URL:')[1].trim();
+                            const vncButtonContainer = document.getElementById('vncButtonContainer');
+                            vncButtonContainer.innerHTML = `<button onclick="window.open('${vncUrl}', '_blank')">Open VNC Session</button>`;
+                        }
+                    }
+                })();
+            });
+        });
+    </script>
+</body>
+</html>
