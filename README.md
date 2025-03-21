@@ -1,4 +1,12 @@
 # l2_cuak
+- ALB + Target Group + Auto Scaling Group Setup is Complete (Follow Guide + This README.md)
+- This l2_cuak codebase (browsing_agent.py here), NEEDS TO BE IMPROVED!!
+      - Then pulled on all instances/CREATE ANOTHER AMI (v2)!!
+
+### TO DO:
+- Improve the base agent!!
+
+
 
 ### Update on 03/21/2025- Containers retained for sessions per instance, sticky load balancer integrated
 - Current ALB endpoints:
