@@ -132,7 +132,7 @@ async def start_and_stream(payload: dict, request: Request):
     4) Do NOT remove container on finish. Instead, rely on the 5-min inactivity cleanup.
     """
 
-    user_ip = request.client.host
+    user_ip = request.headers.get("x-forwarded-for", request.client.host)
     print(f"Incoming /start from IP: {user_ip}")
 
     # 1) Check for existing active session
@@ -338,8 +338,7 @@ def get_vnc(session_id: str, request: Request):
     """
     Returns a noVNC HTML client for the ephemeral port assigned to the container.
     """
-    user_ip = request.client.host
-
+    user_ip = request.headers.get("x-forwarded-for", request.client.host)
     if session_id not in SESSIONS:
         return Response(content="Session not found or expired.", media_type="text/html")
 
