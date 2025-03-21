@@ -328,11 +328,12 @@ async def start_and_stream(payload: dict, request: Request):
 
     # 5) Return the SSE streaming response
     # Custom cookie returned to use by the ALB
-    headers = {
-        "Set-Cookie": f"SessionStickiness={session_id}; Path=/; Secure; SameSite=None; HttpOnly"
-    }
+    # headers = {
+    #     "Set-Cookie": f"SessionStickiness={session_id}; Path=/; Secure; SameSite=None; HttpOnly"
+    # }
     return StreamingResponse(
-        stream_generator(), media_type="text/event-stream", headers=headers
+        stream_generator(),
+        media_type="text/event-stream",  # headers=headers
     )
 
 
