@@ -14,6 +14,7 @@
     - http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com/vnc/{SESSION_ID}
     - Ensure that you are calling it from the same client! (POSTMAN AND BROWSER are different clients)
     - Ensure the ALB has a rule to forward VNC to the same target group!! (STEPS BELOW)
+    - Application-based stickiness cookie added for user access!!
 
 
 ### Update on 03/20/2025- Chrome Containerized, Spawned based on Docker Image
