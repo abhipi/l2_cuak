@@ -32,10 +32,12 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
   document.getElementById('streamOutput').textContent = 'Starting session...\n';
 
   const response = await fetch(vercelAgentUrl, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ protocol:'data', task: document.getElementById('task').value, user_context:'' })
-  });
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',  // ⬅️ IMPORTANT: Ensures cookies are stored!
+        body: JSON.stringify({ protocol: 'data', task: document.getElementById('task').value, user_context: '' })
+    });
+
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

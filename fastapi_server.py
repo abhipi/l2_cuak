@@ -6,6 +6,7 @@ import asyncio
 import requests
 import subprocess
 import signal
+import httpx
 
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -445,6 +446,36 @@ document.addEventListener("DOMContentLoaded", () => {{
 """
 
     return Response(content=html_content, media_type="text/html")
+
+
+###########################
+# For Cookie Injection Through ALB (Client Side Access)
+###########################
+ALB_TARGET_URL_BASE = (
+    "http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com"
+)
+
+
+@app.get("/vnc-proxy/{session_id}")
+async def vnc_proxy(session_id: str, request: Request):
+    """
+    Proxy that fetches the dynamic VNC HTML page from the ALB with stickiness cookie injection and streams it.
+    """
+    stickiness_cookie = request.cookies.get("SessionStickiness")
+    target_url = f"{ALB_TARGET_URL_BASE}/vnc/{session_id}"
+
+    async def stream_response():
+        headers = {}
+        if stickiness_cookie:
+            headers["Cookie"] = f"SessionStickiness={stickiness_cookie}"
+            print(f"Injecting stickiness cookie: {stickiness_cookie}")
+
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream("GET", target_url, headers=headers) as resp:
+                async for chunk in resp.aiter_bytes():
+                    yield chunk
+
+    return StreamingResponse(stream_response(), media_type="text/html")
 
 
 ###########################
