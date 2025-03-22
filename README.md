@@ -3,6 +3,10 @@
 - This l2_cuak codebase (browsing_agent.py here), NEEDS TO BE IMPROVED!!
       - Then pulled on all instances/CREATE ANOTHER AMI (v2)!!
 
+
+### Some Sample Tasks (TO DO):
+- Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll to the string 'The vast majority of computer'
+
 ### TO DO:
 - Improve the base agent!!
 
