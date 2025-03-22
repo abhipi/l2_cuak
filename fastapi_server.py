@@ -21,7 +21,7 @@ app = FastAPI()
 # Docker client (default from_env)
 docker_client = docker.from_env()
 
-# Session info by session_id
+# Session info by session_id (in-memory for quick lookups)
 # Each entry: {
 #   "start_time": float,
 #   "last_active": float,
@@ -34,7 +34,7 @@ docker_client = docker.from_env()
 # }
 SESSIONS = {}
 
-# Map user_ip -> session_id
+# Map user_ip -> session_id (in-memory)
 IP_SESSIONS = {}
 
 # Timeout for container inactivity (5 minutes)
@@ -42,6 +42,69 @@ TIMEOUT = 300
 
 # Timeout for agent subprocess (2 minutes)
 SUBPROCESS_TIMEOUT = 120
+
+###########################
+# REDIS for cross-VM session sharing
+###########################
+import redis
+
+# Example: in your code or .env
+REDIS_HOST = "cuak-v2-uv1vbr.serverless.use1.cache.amazonaws.com"
+REDIS_PORT = 6379  # or whatever port your Redis uses
+
+redis_client = redis.StrictRedis(
+    host=REDIS_HOST, port=REDIS_PORT, decode_responses=True
+)
+
+
+def set_session_data(session_id: str, data: dict):
+    """
+    Store in local memory and mirror to Redis.
+    """
+    SESSIONS[session_id] = data
+    redis_client.set(f"session_data:{session_id}", json.dumps(data))
+
+
+def get_session_data(session_id: str) -> dict:
+    """
+    Retrieve from local memory if present, otherwise from Redis.
+    """
+    if session_id in SESSIONS:
+        return SESSIONS[session_id]
+    r_data = redis_client.get(f"session_data:{session_id}")
+    if r_data:
+        loaded = json.loads(r_data)
+        SESSIONS[session_id] = loaded
+        return loaded
+    return None
+
+
+def delete_session_data(session_id: str):
+    SESSIONS.pop(session_id, None)
+    redis_client.delete(f"session_data:{session_id}")
+
+
+def set_ip_session(user_ip: str, session_id: str):
+    IP_SESSIONS[user_ip] = session_id
+    redis_client.set(f"ip_session:{user_ip}", session_id)
+
+
+def get_ip_session(user_ip: str) -> str:
+    """
+    Retrieve IP -> session_id from local memory or Redis.
+    """
+    if user_ip in IP_SESSIONS:
+        return IP_SESSIONS[user_ip]
+    sid = redis_client.get(f"ip_session:{user_ip}")
+    if sid:
+        IP_SESSIONS[user_ip] = sid
+        return sid
+    return None
+
+
+def delete_ip_session(user_ip: str):
+    IP_SESSIONS.pop(user_ip, None)
+    redis_client.delete(f"ip_session:{user_ip}")
 
 
 ###########################
@@ -68,20 +131,17 @@ def health_check():
 ###########################
 # Helper: get public hostname
 ###########################
-import requests
-
-
 def get_instance_public_ip():
     """
     Attempt to fetch the AWS EC2 public IP via metadata.
     Fallback to localhost if not available or not on AWS.
     """
     try:
-        response = requests.get(
+        resp = requests.get(
             "http://169.254.169.254/latest/meta-data/public-ipv4", timeout=2
         )
-        if response.status_code == 200:
-            return response.text.strip()
+        if resp.status_code == 200:
+            return resp.text.strip()
     except Exception as e:
         print("Error retrieving instance public IP:", e)
     return "localhost"
@@ -100,10 +160,12 @@ async def cleanup_inactive_sessions():
     """
     Every 60s, check all sessions. If a session has been inactive
     (no calls to /start or /vnc) for more than TIMEOUT seconds,
-    remove the container and delete the session from memory.
+    remove the container and delete the session from memory & Redis.
     """
     while True:
         now = time.time()
+        # We must iterate over local memory sessions. If needed,
+        # you could also iterate over redis to find stale sessions.
         for session_id, session_data in list(SESSIONS.items()):
             last_active = session_data["last_active"]
             if (now - last_active) > TIMEOUT:
@@ -118,11 +180,12 @@ async def cleanup_inactive_sessions():
                 except Exception as e:
                     print(f"[CLEANUP] Error removing container {container_id}: {e}")
 
-                # Remove from memory
-                SESSIONS.pop(session_id, None)
+                delete_session_data(session_id)
                 user_ip = session_data["user_ip"]
-                if IP_SESSIONS.get(user_ip) == session_id:
-                    IP_SESSIONS.pop(user_ip, None)
+                existing = get_ip_session(user_ip)
+                if existing == session_id:
+                    delete_ip_session(user_ip)
+
         await asyncio.sleep(60)
 
 
@@ -134,13 +197,13 @@ async def start_and_stream(payload: dict, request: Request):
     user_ip = request.headers.get("x-forwarded-for", request.client.host)
     print(f"Incoming /start from IP: {user_ip}")
 
-    existing_session_id = IP_SESSIONS.get(user_ip)
+    existing_session_id = get_ip_session(user_ip)
     session_id = None
     container = None
     reuse = False
 
     if existing_session_id:
-        existing_data = SESSIONS.get(existing_session_id)
+        existing_data = get_session_data(existing_session_id)
         if existing_data:
             elapsed = time.time() - existing_data["last_active"]
             if elapsed < TIMEOUT:
@@ -149,6 +212,9 @@ async def start_and_stream(payload: dict, request: Request):
                 container = docker_client.containers.get(container_id)
                 session_id = existing_session_id
                 existing_data["last_active"] = time.time()
+                set_session_data(
+                    session_id, existing_data
+                )  # Mirror updated last_active
                 print(f"Reusing container {container.name} for IP {user_ip}")
             else:
                 # stale; remove from memory and kill container
@@ -159,8 +225,8 @@ async def start_and_stream(payload: dict, request: Request):
                     container.remove(force=True)
                 except:
                     pass
-                SESSIONS.pop(existing_session_id, None)
-                IP_SESSIONS.pop(user_ip, None)
+                delete_session_data(existing_session_id)
+                delete_ip_session(user_ip)
 
     if not reuse:
         # Spin up a new container
@@ -188,7 +254,7 @@ async def start_and_stream(payload: dict, request: Request):
         no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
         vnc_port_mapping = ports_info["5900/tcp"][0]["HostPort"]
 
-        SESSIONS[session_id] = {
+        session_data = {
             "start_time": time.time(),
             "last_active": time.time(),
             "container_id": container.id,
@@ -198,7 +264,8 @@ async def start_and_stream(payload: dict, request: Request):
             "user_ip": user_ip,
             "process": None,
         }
-        IP_SESSIONS[user_ip] = session_id
+        set_session_data(session_id, session_data)
+        set_ip_session(user_ip, session_id)
     else:
         container.reload()
         ports_info = container.attrs["NetworkSettings"]["Ports"]
@@ -206,7 +273,9 @@ async def start_and_stream(payload: dict, request: Request):
         no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
         vnc_port_mapping = ports_info["5900/tcp"][0]["HostPort"]
 
-        SESSIONS[session_id].update(
+        # Update session data
+        updated_data = get_session_data(session_id)
+        updated_data.update(
             {
                 "last_active": time.time(),
                 "cdp_port": cdp_port_mapping,
@@ -214,17 +283,18 @@ async def start_and_stream(payload: dict, request: Request):
                 "vnc_port": vnc_port_mapping,
             }
         )
+        set_session_data(session_id, updated_data)
 
     # Construct CDP URL
-    host_for_cdp = get_instance_public_ip()  # Change to localhost if needed
+    host_for_cdp = get_instance_public_ip()  # Change to "localhost" if needed
     cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"
     payload["cdp_url"] = cdp_url
 
     # Kill any old running process for this session
-    old_proc = SESSIONS[session_id].get("process")
+    session_data = get_session_data(session_id)
+    old_proc = session_data.get("process")
     if old_proc and old_proc.poll() is None:
         print(f"Killing old agent process for session {session_id}")
-        # Force kill instantly (Unix!)
         try:
             os.killpg(os.getpgid(old_proc.pid), signal.SIGKILL)
         except Exception as e:
@@ -242,7 +312,8 @@ async def start_and_stream(payload: dict, request: Request):
         preexec_fn=os.setsid,
         cwd="/home/ubuntu/l2_cuak",
     )
-    SESSIONS[session_id]["process"] = process
+    session_data["process"] = process
+    set_session_data(session_id, session_data)
 
     async def stream_generator():
         yield f"data: Session started with ID: {session_id}. Container: {container.name}\n\n"
@@ -252,9 +323,13 @@ async def start_and_stream(payload: dict, request: Request):
         try:
             while True:
                 elapsed = time.time() - start_time
-                SESSIONS[session_id]["last_active"] = time.time()
+                # Refresh last_active in memory + redis
+                current_data = get_session_data(session_id)
+                if current_data:
+                    current_data["last_active"] = time.time()
+                    set_session_data(session_id, current_data)
 
-                # Killing the subprocess if client disconnects (VERCEL/ANY OTHER ENDPOINT)
+                # If the client disconnects
                 if await request.is_disconnected():
                     yield "data: Client disconnected. Killing subprocess.\n\n"
                     try:
@@ -291,11 +366,9 @@ async def start_and_stream(payload: dict, request: Request):
                 if elapsed > SUBPROCESS_TIMEOUT:
                     yield f"data: Subprocess timed out after {SUBPROCESS_TIMEOUT}s. Killing!\n\n"
                     try:
-                        # Force kill instantly
                         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                     except Exception as e:
                         yield f"data: Error forcibly killing agent: {e}\n\n"
-
                     yield "event: close\ndata: end\n\n"
                     return
 
@@ -308,18 +381,14 @@ async def start_and_stream(payload: dict, request: Request):
                 await asyncio.sleep(0.05)
 
         finally:
-            # Mark reference as None
-            if SESSIONS.get(session_id):
-                SESSIONS[session_id]["process"] = None
+            # Mark reference as None in memory + redis
+            sd = get_session_data(session_id)
+            if sd and "process" in sd:
+                sd["process"] = None
+                set_session_data(session_id, sd)
             print(f"Agent process ended for session {session_id}")
 
-    # Custom cookie returned to use by the ALB
-    headers = {
-        "Set-Cookie": f"SessionStickiness={session_id}; Path=/; Secure; SameSite=None; HttpOnly"
-    }
-    return StreamingResponse(
-        stream_generator(), media_type="text/event-stream", headers=headers
-    )
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
 ###########################
@@ -331,18 +400,17 @@ def get_vnc(session_id: str, request: Request):
     Returns a noVNC HTML client for the ephemeral port assigned to the container.
     """
     user_ip = request.headers.get("x-forwarded-for", request.client.host)
-    if session_id not in SESSIONS:
+    session_data = get_session_data(session_id)
+    if not session_data:
         return Response(content="Session not found or expired.", media_type="text/html")
 
     # Optional: Enforce the IP match if you want strict per-IP usage
-    session_data = SESSIONS[session_id]
     # if session_data["user_ip"] != user_ip:
-    #     return Response(
-    #         content="Session does not belong to your IP.", media_type="text/html"
-    #     )
+    #     return Response("Session does not belong to your IP.", media_type="text/html")
 
     # Update last_active
     session_data["last_active"] = time.time()
+    set_session_data(session_id, session_data)
 
     # Reload container to confirm ports
     container_id = session_data["container_id"]
@@ -456,42 +524,6 @@ document.addEventListener("DOMContentLoaded", () => {{
 """
 
     return Response(content=html_content, media_type="text/html")
-
-
-###########################
-# For Cookie Injection Through ALB (Client Side Access)
-###########################
-ALB_TARGET_URL_BASE = (
-    "http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com"
-)
-
-
-@app.get("/vnc-proxy/{session_id}")
-async def vnc_proxy(session_id: str, request: Request):
-    client_ip = request.headers.get("x-forwarded-for") or request.client.host
-    stickiness = request.query_params.get("session_stickiness")
-    target = f"{ALB_TARGET_URL_BASE}/vnc/{session_id}"
-
-    print(
-        f"Proxying to {target} with stickiness={stickiness} and client_ip={client_ip}"
-    )
-
-    async def stream_response():
-        headers = {"X-Forwarded-For": client_ip}
-        if stickiness:
-            headers["Cookie"] = f"SessionStickiness={stickiness}"
-
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
-                "GET", target, headers=headers, follow_redirects=False
-            ) as resp:
-                resp.raise_for_status()
-                async for chunk in resp.aiter_bytes():
-                    yield chunk
-
-    response = StreamingResponse(stream_response(), media_type="text/html")
-    response.headers["Content-Type"] = "text/html; charset=utf-8"
-    return response
 
 
 ###########################
