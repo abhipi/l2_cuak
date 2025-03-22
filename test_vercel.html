@@ -31,47 +31,72 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
   document.getElementById('vncButtonContainer').innerHTML = '';
   document.getElementById('streamOutput').textContent = 'Starting session…\n';
 
-  const resp = await fetch(vercelAgentUrl, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      protocol:'data',
-      task: document.getElementById('task').value,
-      user_context:''
-    })
-  });
+  let stickiness = null;
+  let vncUrl = null;
+  let buffer = '';
 
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '', stickiness=null, vncUrl=null;
-
-  while(true){
-    const {done, value} = await reader.read();
-    if(done) break;
-    const chunk = decoder.decode(value);
-    document.getElementById('streamOutput').textContent += chunk;
-    buffer += chunk;
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-
-    for(const line of lines){
-      if(line.includes('SESSION_STICKINESS:')){
-        stickiness = line.split('SESSION_STICKINESS:')[1].trim();
-      }
-      if(line.includes('VNC_URL:')){
-        vncUrl = line.split('VNC_URL:')[1].trim();
-        const sessionId = vncUrl.split('/vnc/')[1];
-        const iframeSrc = `${proxyBase}/${sessionId}?session_stickiness=${encodeURIComponent(stickiness)}`;
-        document.getElementById('vncButtonContainer').innerHTML =
-          `<iframe src="${iframeSrc}" width="100%" height="700px" frameborder="0"></iframe>`;
-      }
+  function tryLoadIframe() {
+    if (stickiness && vncUrl) {
+      const sessionId = vncUrl.split('/vnc/')[1];
+      let iframeSrc = `${proxyBase}/${sessionId}?session_stickiness=${encodeURIComponent(stickiness)}`;
+      document.getElementById('vncButtonContainer').innerHTML =
+        `<iframe src="${iframeSrc}" width="100%" height="700" frameborder="0"></iframe>`;
     }
+  }
+
+  try {
+    const resp = await fetch(vercelAgentUrl, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        protocol:'data',
+        task: document.getElementById('task').value,
+        user_context:''
+      })
+    });
+
+    if (!resp.ok) throw new Error(`Agent error: ${resp.status}`);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      document.getElementById('streamOutput').textContent += chunk;
+      document.getElementById('streamOutput').scrollTop = document.getElementById('streamOutput').scrollHeight;
+
+      buffer += chunk;
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+          const cleanLine = line.startsWith('data:') ? line.slice(5).trim() : line.trim();
+
+          if (cleanLine.startsWith('SESSION_STICKINESS:')) {
+            stickiness = cleanLine.replace('SESSION_STICKINESS:', '').trim();
+            tryLoadIframe();
+          }
+
+          if (cleanLine.startsWith('VNC_URL:')) {
+            vncUrl = cleanLine.replace('VNC_URL:', '').trim();
+            tryLoadIframe();
+          }
+        }
+
+    }
+  }
+  catch(err) {
+    document.getElementById('streamOutput').textContent += `\nError: ${err.message}`;
   }
 });
 </script>
 </body>
 </html>
+
+
 
 
 

@@ -326,10 +326,10 @@ def get_vnc(session_id: str, request: Request):
 
     # Optional: Enforce the IP match if you want strict per-IP usage
     session_data = SESSIONS[session_id]
-    if session_data["user_ip"] != user_ip:
-        return Response(
-            content="Session does not belong to your IP.", media_type="text/html"
-        )
+    # if session_data["user_ip"] != user_ip:
+    #     return Response(
+    #         content="Session does not belong to your IP.", media_type="text/html"
+    #     )
 
     # Update last_active
     session_data["last_active"] = time.time()
