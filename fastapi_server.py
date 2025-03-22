@@ -302,7 +302,13 @@ async def start_and_stream(payload: dict, request: Request):
                 SESSIONS[session_id]["process"] = None
             print(f"Agent process ended for session {session_id}")
 
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+    # Custom cookie returned to use by the ALB
+    headers = {
+        "Set-Cookie": f"SessionStickiness={session_id}; Path=/; Secure; SameSite=None; HttpOnly"
+    }
+    return StreamingResponse(
+        stream_generator(), media_type="text/event-stream", headers=headers
+    )
 
 
 ###########################
