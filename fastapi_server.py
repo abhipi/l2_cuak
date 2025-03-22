@@ -39,6 +39,9 @@ IP_SESSIONS = {}
 # Timeout for container inactivity (5 minutes)
 TIMEOUT = 300
 
+# Timeout for agent subprocess (2 minutes)
+SUBPROCESS_TIMEOUT = 120
+
 
 ###########################
 # Enable CORS
@@ -280,8 +283,8 @@ async def start_and_stream(payload: dict, request: Request):
                     task.cancel()
 
                 # Subprocess time limit
-                if elapsed > TIMEOUT:
-                    yield f"data: Subprocess timed out after {TIMEOUT}s. Killing!\n\n"
+                if elapsed > SUBPROCESS_TIMEOUT:
+                    yield f"data: Subprocess timed out after {SUBPROCESS_TIMEOUT}s. Killing!\n\n"
                     try:
                         # Force kill instantly
                         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
