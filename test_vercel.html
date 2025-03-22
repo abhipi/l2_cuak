@@ -1,91 +1,114 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Start VNC Browsing Agent</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 20px; }
-  #streamOutput { white-space: pre-line; border:1px solid #ccc; padding:10px; height:300px; overflow-y:auto; }
-  button { padding:10px 20px; font-size:16px; }
-  textarea { width:100%; padding:8px; margin:10px 0; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Start VNC Browsing Agent</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif; 
+      margin: 20px;
+    }
+    #streamOutput {
+      white-space: pre-line;
+      border: 1px solid #ccc;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+    textarea {
+      width: 100%;
+      padding: 8px;
+      margin: 10px 0;
+    }
+  </style>
 </head>
 <body>
   <h1>Start VNC Browsing Agent</h1>
   <form id="taskForm">
     <label for="task">Enter task description:</label>
     <textarea id="task" name="task" rows="4" placeholder="Describe the browsing task..."></textarea>
-    <button type="submit">Start Session & Stream</button>
+    <button type="submit">Start Session &amp; Stream</button>
   </form>
 
   <div id="vncButtonContainer" style="margin-top:20px;"></div>
   <div id="streamOutput"></div>
 
 <script>
+/**
+ * Your Vercel proxy that starts the session & streams events:
+ */
 const vercelAgentUrl = 'https://vercel-agents.vercel.app/browser_agent';
-const proxyBase = 'http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com/vnc-proxy';
 
 document.getElementById('taskForm').addEventListener('submit', async e => {
   e.preventDefault();
   document.getElementById('vncButtonContainer').innerHTML = '';
   document.getElementById('streamOutput').textContent = 'Starting session…\n';
 
-  let stickiness = null;
+  let stickiness = null;  // If needed, you could store & set as cookie
   let vncUrl = null;
   let buffer = '';
 
+  // Directly load the ALB's /vnc/{session_id} into the iframe
   function tryLoadIframe() {
-    if (stickiness && vncUrl) {
-      const sessionId = vncUrl.split('/vnc/')[1];
-      let iframeSrc = `${proxyBase}/${sessionId}?session_stickiness=${encodeURIComponent(stickiness)}`;
+    if (vncUrl) {
       document.getElementById('vncButtonContainer').innerHTML =
-        `<iframe src="${iframeSrc}" width="100%" height="700" frameborder="0"></iframe>`;
+        `<iframe src="${vncUrl}" width="100%" height="700" frameborder="0"></iframe>`;
     }
   }
 
   try {
+    // Make the POST request to your Vercel function
     const resp = await fetch(vercelAgentUrl, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
-        protocol:'data',
+        protocol: 'data',
         task: document.getElementById('task').value,
-        user_context:''
+        user_context: ''
       })
     });
 
     if (!resp.ok) throw new Error(`Agent error: ${resp.status}`);
 
+    // Stream the response (Server-Sent Events)
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
 
     while (true) {
-      const {done, value} = await reader.read();
+      const { done, value } = await reader.read();
       if (done) break;
 
       const chunk = decoder.decode(value);
       document.getElementById('streamOutput').textContent += chunk;
-      document.getElementById('streamOutput').scrollTop = document.getElementById('streamOutput').scrollHeight;
+      document.getElementById('streamOutput').scrollTop =
+        document.getElementById('streamOutput').scrollHeight;
 
       buffer += chunk;
       const lines = buffer.split('\n');
-      buffer = lines.pop();
+      buffer = lines.pop(); // leftover partial line
 
       for (const line of lines) {
-          const cleanLine = line.startsWith('data:') ? line.slice(5).trim() : line.trim();
+        // Each SSE line typically starts with "data:"
+        const cleanLine = line.startsWith('data:')
+          ? line.slice(5).trim()
+          : line.trim();
 
-          if (cleanLine.startsWith('SESSION_STICKINESS:')) {
-            stickiness = cleanLine.replace('SESSION_STICKINESS:', '').trim();
-            tryLoadIframe();
-          }
-
-          if (cleanLine.startsWith('VNC_URL:')) {
-            vncUrl = cleanLine.replace('VNC_URL:', '').trim();
-            tryLoadIframe();
-          }
+        if (cleanLine.startsWith('SESSION_STICKINESS:')) {
+          // If your SSE includes this, you could set a cookie or do something else
+          stickiness = cleanLine.replace('SESSION_STICKINESS:', '').trim();
+          console.log("Stickiness:", stickiness);
         }
 
+        if (cleanLine.startsWith('VNC_URL:')) {
+          vncUrl = cleanLine.replace('VNC_URL:', '').trim();
+          tryLoadIframe();
+        }
+      }
     }
   }
   catch(err) {

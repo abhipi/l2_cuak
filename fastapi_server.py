@@ -52,9 +52,16 @@ import redis
 REDIS_HOST = "cuak-v2-uv1vbr.serverless.use1.cache.amazonaws.com"
 REDIS_PORT = 6379  # or whatever port your Redis uses
 
-redis_client = redis.StrictRedis(
-    host=REDIS_HOST, port=REDIS_PORT, decode_responses=True
+redis_client = redis.RedisCluster(
+    host=REDIS_HOST,
+    port=REDIS_PORT,
+    ssl=True,  # Enable TLS (equivalent to rediss://)
+    ssl_cert_reqs=None,  # Ignore cert verification if needed
+    decode_responses=True,  # So it automatically decodes to strings
+    # password="YOUR_REDIS_AUTH_TOKEN",  # Uncomment if you use Redis auth token
 )
+# DEBUGGING TEST
+print(redis_client.ping())  # Should print True if connected
 
 
 def set_session_data(session_id: str, data: dict):
