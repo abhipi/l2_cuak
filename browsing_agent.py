@@ -25,14 +25,13 @@ if not os.getenv("OPENAI_API_KEY"):
 # ------------------------------------------------------------------------------
 def parse_payload_from_argv():
     """
-    Reads the first argument from sys.argv and parses as JSON.
-    If invalid or missing, fail loudly.
+    Reads all arguments (sys.argv[1:]) as a single JSON string and parses them.
     """
     if len(sys.argv) < 2:
         raise ValueError("No JSON payload argument provided to browsing_agent.py")
 
-    payload_str = sys.argv[1]
-    print(f"Received argv payload: {payload_str}", flush=True)
+    payload_str = " ".join(sys.argv[1:])  # Join all parts into one string
+    print(f"Received payload from argv: {payload_str}", flush=True)
 
     try:
         payload = json.loads(payload_str)
