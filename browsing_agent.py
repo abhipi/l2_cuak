@@ -52,7 +52,7 @@ async def main():
     payload = parse_payload_from_argv()
     task_text = payload.get("task", "")
     model_name = payload.get("model", "gpt-4o")  # default fallback
-    cdp_url = payload.get("cdp_url", "http://localhost:9333")
+    cdp_url = payload.get("cdp_url", "")
 
     # Initialize LLM and Agent
     llm = ChatOpenAI(model=model_name)
@@ -62,7 +62,10 @@ async def main():
         browser=Browser(
             config=BrowserConfig(
                 headless=False,
-                cdp_url=cdp_url,  # Pulled from JSON payload
+                wait_for_network_idle_page_load_time=2.0,
+                wait_between_actions=1.0,
+                minimum_wait_page_load_time=1.0,
+                cdp_url=cdp_url,
             )
         ),
     )
