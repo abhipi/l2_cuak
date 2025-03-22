@@ -28,7 +28,7 @@
   </style>
 </head>
 <body>
-  <h1>Start VNC Browsing Agent</h1>
+  <h1>Start VNC Browsing Agent (Through Vercel)</h1>
   <form id="taskForm">
     <label for="task">Enter task description:</label>
     <textarea id="task" name="task" rows="4" placeholder="Describe the browsing task..."></textarea>
@@ -39,33 +39,26 @@
   <div id="streamOutput"></div>
 
 <script>
-/**
- * Your Vercel proxy that starts the session & streams events:
- */
 const vercelAgentUrl = 'https://vercel-agents.vercel.app/browser_agent';
+const albBaseUrl = 'http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com/vnc';
 
 document.getElementById('taskForm').addEventListener('submit', async e => {
   e.preventDefault();
   document.getElementById('vncButtonContainer').innerHTML = '';
   document.getElementById('streamOutput').textContent = 'Starting session…\n';
 
-  let stickiness = null;  // If needed, you could store & set as cookie
-  let vncUrl = null;
   let buffer = '';
 
-  // Directly load the ALB's /vnc/{session_id} into the iframe
-  function tryLoadIframe() {
-    if (vncUrl) {
-      document.getElementById('vncButtonContainer').innerHTML =
-        `<iframe src="${vncUrl}" width="100%" height="700" frameborder="0"></iframe>`;
-    }
+  function loadIframeWithSessionId(sessionId) {
+    const albUrl = `${albBaseUrl}/${sessionId}`;
+    document.getElementById('vncButtonContainer').innerHTML =
+      `<iframe src="${albUrl}" width="100%" height="700" frameborder="0"></iframe>`;
   }
 
   try {
-    // Make the POST request to your Vercel function
     const resp = await fetch(vercelAgentUrl, {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         protocol: 'data',
         task: document.getElementById('task').value,
@@ -75,7 +68,6 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
 
     if (!resp.ok) throw new Error(`Agent error: ${resp.status}`);
 
-    // Stream the response (Server-Sent Events)
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
 
@@ -90,34 +82,28 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
 
       buffer += chunk;
       const lines = buffer.split('\n');
-      buffer = lines.pop(); // leftover partial line
+      buffer = lines.pop();
 
       for (const line of lines) {
-        // Each SSE line typically starts with "data:"
-        const cleanLine = line.startsWith('data:')
-          ? line.slice(5).trim()
-          : line.trim();
-
-        if (cleanLine.startsWith('SESSION_STICKINESS:')) {
-          // If your SSE includes this, you could set a cookie or do something else
-          stickiness = cleanLine.replace('SESSION_STICKINESS:', '').trim();
-          console.log("Stickiness:", stickiness);
-        }
+        const cleanLine = line.startsWith('data:') ? line.slice(5).trim() : line.trim();
 
         if (cleanLine.startsWith('VNC_URL:')) {
-          vncUrl = cleanLine.replace('VNC_URL:', '').trim();
-          tryLoadIframe();
+          const vncUrl = cleanLine.replace('VNC_URL:', '').trim();
+          // Extract session ID from the provided VNC URL
+          const sessionId = vncUrl.split('/vnc/')[1];
+          loadIframeWithSessionId(sessionId);
         }
       }
     }
   }
-  catch(err) {
+  catch (err) {
     document.getElementById('streamOutput').textContent += `\nError: ${err.message}`;
   }
 });
 </script>
 </body>
 </html>
+
 
 
 
