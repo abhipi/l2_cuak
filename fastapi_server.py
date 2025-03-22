@@ -254,6 +254,16 @@ async def start_and_stream(payload: dict, request: Request):
                 elapsed = time.time() - start_time
                 SESSIONS[session_id]["last_active"] = time.time()
 
+                # Killing the subprocess if client disconnects (VERCEL/ANY OTHER ENDPOINT)
+                if await request.is_disconnected():
+                    yield "data: Client disconnected. Killing subprocess.\n\n"
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except Exception as e:
+                        yield f"data: Error killing subprocess: {e}\n\n"
+                    yield "event: close\ndata: end\n\n"
+                    return
+
                 # Read from stdout/stderr concurrently
                 stdout_task = asyncio.create_task(
                     asyncio.to_thread(process.stdout.readline)
