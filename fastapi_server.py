@@ -215,7 +215,7 @@ async def start_and_stream(payload: dict, request: Request):
         )
 
     # Construct CDP URL
-    host_for_cdp = get_instance_public_hostname()  # Change to localhost if needed
+    host_for_cdp = get_instance_public_ip()  # Change to localhost if needed
     cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"
     payload["cdp_url"] = cdp_url
 
@@ -337,7 +337,7 @@ def get_vnc(session_id: str, request: Request):
 
     ports_info = container.attrs["NetworkSettings"]["Ports"]
     no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
-    vnc_host = os.getenv("PUBLIC_DNS", get_instance_public_hostname())
+    vnc_host = get_instance_public_ip()  # Setting to instance IP
     vnc_password = os.getenv("VNC_PASSWORD", "12345678")
 
     # Construct the HTML
