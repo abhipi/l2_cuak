@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Inject Stickiness & Redirect</title>
+</head>
+<body>
+  <p>Preparing VNC session…</p>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const vncUrl = decodeURIComponent(params.get('vnc_url'));
+  const stickiness = params.get('session_stickiness');
+  const albDomain = params.get('alb_domain');
+
+  if (!vncUrl || !stickiness || !albDomain) {
+    document.body.innerHTML = '<p style="color:red">Missing VNC URL or stickiness token</p>';
+  } else {
+    // Set ALB stickiness cookie
+    document.cookie = `SessionStickiness=${stickiness}; path=/; domain=${albDomain}; SameSite=None; Secure`;
+    // Redirect iframe to actual VNC endpoint
+    setTimeout(() => window.location.href = vncUrl, 200);
+  }
+</script>
+</body>
+</html>
