@@ -65,11 +65,13 @@ print(redis_client.ping())  # Should print True if connected
 
 
 def set_session_data(session_id: str, data: dict):
-    """
-    Store in local memory and mirror to Redis.
-    """
+    data_copy = data.copy()
+    if "process" in data_copy:
+        data_copy["process"] = (
+            None  # or remove it entirely (SUBPROCESS IS NOT SERIALIZABLE)
+        )
     SESSIONS[session_id] = data
-    redis_client.set(f"session_data:{session_id}", json.dumps(data))
+    redis_client.set(f"session_data:{session_id}", json.dumps(data_copy))
 
 
 def get_session_data(session_id: str) -> dict:
