@@ -26,26 +26,21 @@ if not os.getenv("OPENAI_API_KEY"):
 def parse_payload_from_argv():
     """
     Reads the first argument from sys.argv and parses as JSON.
-    Supports:
-      python browsing_agent.py '{"task": "...", "cdp_url": "..."}'
+    If invalid or missing, fail loudly.
     """
     if len(sys.argv) < 2:
-        return {
-            "task": "Navigate to 'https://en.wikipedia.org/wiki/Internet' and scroll to a specific string.",
-            "cdp_url": os.getenv("CDP_URL", "http://localhost:9333"),
-        }
+        raise ValueError("No JSON payload argument provided to browsing_agent.py")
 
     payload_str = sys.argv[1]
+    print(f"Received argv payload: {payload_str}", flush=True)
+
     try:
         payload = json.loads(payload_str)
-    except json.JSONDecodeError:
-        payload = {
-            "task": payload_str,
-            "cdp_url": os.getenv("CDP_URL", "http://localhost:9333"),
-        }
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON provided to browsing_agent.py: {e}")
 
     if "cdp_url" not in payload:
-        payload["cdp_url"] = os.getenv("CDP_URL", "http://localhost:9333")
+        raise ValueError("cdp_url missing in payload! Cannot proceed.")
 
     return payload
 
