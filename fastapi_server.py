@@ -331,10 +331,8 @@ async def start_and_stream(payload: dict, request: Request):
     # headers = {
     #     "Set-Cookie": f"SessionStickiness={session_id}; Path=/; Secure; SameSite=None; HttpOnly"
     # }
-    return StreamingResponse(
-        stream_generator(),
-        media_type="text/event-stream",  # headers=headers
-    )
+    # Headers removed (TEST)
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
 ###########################
