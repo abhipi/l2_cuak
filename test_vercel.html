@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Start and Connect VNC Session</title>
+    <title>Start and Connect VNC Session (Vercel)</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
         #streamOutput { white-space: pre-line; border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; margin-top: 20px; }
@@ -12,21 +12,23 @@
     </style>
 </head>
 <body>
-    <h1>Start VNC Browsing Agent</h1>
+    <h1>Start VNC Browsing Agent (Vercel)</h1>
     <form id="taskForm">
         <label for="task">Enter task description:</label>
         <textarea id="task" name="task" rows="4" placeholder="Describe the browsing task..."></textarea>
         <button type="submit">Start Session & Stream</button>
     </form>
 
+    <div id="vncButtonContainer" style="margin-top: 20px;"></div>
+
     <script>
-        const vercelAgentUrl = 'https://vercel-agents.vercel.app/browser_agent'; // Replace with your actual serverless endpoint
+        const vercelAgentUrl = 'https://vercel-agents.vercel.app/browser_agent'; // Replace with your endpoint
 
         document.getElementById('taskForm').addEventListener('submit', async function(event) {
             event.preventDefault();
             const taskDescription = document.getElementById('task').value;
 
-            // Open a new window for streaming output
+            // Open stream window
             const streamWindow = window.open('', '_blank', 'width=800,height=600');
             streamWindow.document.write('<pre id="streamOutput">Starting session...\n</pre>');
 
@@ -42,6 +44,7 @@
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
+            let bufferedLine = '';
 
             (async function readStream() {
                 while (true) {
@@ -52,15 +55,24 @@
                     streamWindow.document.getElementById('streamOutput').textContent += chunk;
                     streamWindow.scrollTo(0, streamWindow.document.body.scrollHeight);
 
-                    // If VNC_URL is found, open that URL in a new tab
-                    if (chunk.includes('VNC_URL:')) {
-                        const vncUrl = chunk.split('VNC_URL:')[1].trim();
-                        window.open(vncUrl, '_blank');
-                    }
+                    bufferedLine += chunk;
+                    let lines = bufferedLine.split('\n');
+                    bufferedLine = lines.pop(); // Incomplete line carried over
+
+                    lines.forEach(line => {
+                        if (line.includes('VNC_URL:')) {
+                            const vncUrl = line.split('VNC_URL:')[1].trim();
+                            console.log('Detected VNC URL:', vncUrl);
+                            const vncButtonContainer = document.getElementById('vncButtonContainer');
+                            vncButtonContainer.innerHTML = `<button onclick="window.open('${vncUrl}', '_blank')">Connect to VNC Viewport</button>`;
+                        }
+                    });
                 }
             })();
         });
     </script>
 </body>
 </html>
+
+
 
