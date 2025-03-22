@@ -67,19 +67,22 @@ def health_check():
 ###########################
 # Helper: get public hostname
 ###########################
-def get_instance_public_hostname():
+import requests
+
+
+def get_instance_public_ip():
     """
-    Attempt to fetch the AWS EC2 public hostname via metadata.
+    Attempt to fetch the AWS EC2 public IP via metadata.
     Fallback to localhost if not available or not on AWS.
     """
     try:
         response = requests.get(
-            "http://169.254.169.254/latest/meta-data/public-hostname", timeout=2
+            "http://169.254.169.254/latest/meta-data/public-ipv4", timeout=2
         )
         if response.status_code == 200:
             return response.text.strip()
     except Exception as e:
-        print("Error retrieving instance public hostname:", e)
+        print("Error retrieving instance public IP:", e)
     return "localhost"
 
 
