@@ -458,11 +458,13 @@ ALB_TARGET_URL_BASE = (
 
 @app.get("/vnc-proxy/{session_id}")
 async def vnc_proxy(session_id: str, request: Request):
-    # Capture client IP
     client_ip = request.headers.get("x-forwarded-for") or request.client.host
-
     stickiness = request.query_params.get("session_stickiness")
     target = f"{ALB_TARGET_URL_BASE}/vnc/{session_id}"
+
+    print(
+        f"Proxying to {target} with stickiness={stickiness} and client_ip={client_ip}"
+    )
 
     async def stream_response():
         headers = {"X-Forwarded-For": client_ip}
@@ -470,12 +472,16 @@ async def vnc_proxy(session_id: str, request: Request):
             headers["Cookie"] = f"SessionStickiness={stickiness}"
 
         async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("GET", target, headers=headers) as resp:
+            async with client.stream(
+                "GET", target, headers=headers, follow_redirects=False
+            ) as resp:
                 resp.raise_for_status()
                 async for chunk in resp.aiter_bytes():
                     yield chunk
 
-    return StreamingResponse(stream_response(), media_type="text/html")
+    response = StreamingResponse(stream_response(), media_type="text/html")
+    response.headers["Content-Type"] = "text/html; charset=utf-8"
+    return response
 
 
 ###########################
