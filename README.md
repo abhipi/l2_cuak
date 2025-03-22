@@ -1,5 +1,5 @@
 # l2_cuak
-- ALB + Target Group + Auto Scaling Group Setup is Complete (Follow Guide + This README.md)
+- ALB + Target Group + Auto Scaling Group + Redis Setup is Complete (Follow Guides in agent_browser/src/agent_templates/browser_use_agent + This README.md)
 - This l2_cuak codebase (browsing_agent.py here), NEEDS TO BE IMPROVED!!
       - Then pulled on all instances/CREATE ANOTHER AMI (v2)!!
 
@@ -7,8 +7,12 @@
 - Improve the base agent!!
 
 
+### 03/22/2025- First stable version (v2)
+- Redis global (across ALB) session routing
+- Ensures stickiness and routing to the right VM inspite of intermediate calls (Vercel, etc.)
+- Keeps the original setup plug and play 
 
-### Update on 03/21/2025- Containers retained for sessions per instance, sticky load balancer integrated
+### 03/21/2025- Containers retained for sessions per instance, sticky load balancer integrated
 - Current ALB endpoints:
     - http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com/start
     - http://cuak-v1-stickiness-balancer-871735130.us-east-1.elb.amazonaws.com/vnc/{SESSION_ID}
@@ -16,8 +20,7 @@
     - Ensure the ALB has a rule to forward VNC to the same target group!! (STEPS BELOW)
     - Application-based stickiness cookie added for user access!!
 
-
-### Update on 03/20/2025- Chrome Containerized, Spawned based on Docker Image
+### 03/20/2025- Chrome Containerized, Spawned based on Docker Image
 - Current Instance's Static Endpoints:
     - http://44.195.135.191:8080/start 
     - http://44.195.135.191:8080/vnc/{SESSION_ID}
@@ -30,11 +33,7 @@
 
 
 
-
-
-
-
-### ALB Rule Forwarding Guide
+### ALB Rule Forwarding Guide (CUSTOM ENDPOINTS: /vnc/* example)
 ### ✅ Step-by-step: Setting up ALB WebSocket-friendly routing rules for `/vnc/{session_id}`
 
 > By default, ALB should support WebSocket forwarding on HTTP/HTTPS listeners. But making it explicit helps ensure consistent routing behavior.
