@@ -30,6 +30,7 @@ docker_client = docker.from_env()
 #   "no_vnc_port": str,
 #   "vnc_port": str,
 #   "user_ip": str,
+#   "host_public_ip": str,  # <-- We'll store this now
 #   "process": subprocess.Popen or None
 # }
 SESSIONS = {}
@@ -48,7 +49,6 @@ SUBPROCESS_TIMEOUT = 120
 ###########################
 import redis
 
-# Example: in your code or .env
 REDIS_HOST = "cuak-v2-uv1vbr.serverless.use1.cache.amazonaws.com"
 REDIS_PORT = 6379  # or whatever port your Redis uses
 
@@ -212,9 +212,7 @@ async def start_and_stream(payload: dict, request: Request):
                 container = docker_client.containers.get(container_id)
                 session_id = existing_session_id
                 existing_data["last_active"] = time.time()
-                set_session_data(
-                    session_id, existing_data
-                )  # Mirror updated last_active
+                set_session_data(session_id, existing_data)
                 print(f"Reusing container {container.name} for IP {user_ip}")
             else:
                 # stale; remove from memory and kill container
@@ -254,6 +252,9 @@ async def start_and_stream(payload: dict, request: Request):
         no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
         vnc_port_mapping = ports_info["5900/tcp"][0]["HostPort"]
 
+        # Store the public IP so any VM can generate the correct noVNC URL
+        public_ip_for_container = get_instance_public_ip()
+
         session_data = {
             "start_time": time.time(),
             "last_active": time.time(),
@@ -262,6 +263,7 @@ async def start_and_stream(payload: dict, request: Request):
             "no_vnc_port": no_vnc_port_mapping,
             "vnc_port": vnc_port_mapping,
             "user_ip": user_ip,
+            "host_public_ip": public_ip_for_container,  # <--- HERE we store the original VM IP
             "process": None,
         }
         set_session_data(session_id, session_data)
@@ -273,7 +275,6 @@ async def start_and_stream(payload: dict, request: Request):
         no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
         vnc_port_mapping = ports_info["5900/tcp"][0]["HostPort"]
 
-        # Update session data
         updated_data = get_session_data(session_id)
         updated_data.update(
             {
@@ -286,12 +287,11 @@ async def start_and_stream(payload: dict, request: Request):
         set_session_data(session_id, updated_data)
 
     # Construct CDP URL
-    host_for_cdp = get_instance_public_ip()  # Change to "localhost" if needed
-    cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"
+    session_data = get_session_data(session_id)
+    cdp_url = f"http://{session_data['host_public_ip']}:{session_data['cdp_port']}"
     payload["cdp_url"] = cdp_url
 
     # Kill any old running process for this session
-    session_data = get_session_data(session_id)
     old_proc = session_data.get("process")
     if old_proc and old_proc.poll() is None:
         print(f"Killing old agent process for session {session_id}")
@@ -323,7 +323,6 @@ async def start_and_stream(payload: dict, request: Request):
         try:
             while True:
                 elapsed = time.time() - start_time
-                # Refresh last_active in memory + redis
                 current_data = get_session_data(session_id)
                 if current_data:
                     current_data["last_active"] = time.time()
@@ -381,7 +380,6 @@ async def start_and_stream(payload: dict, request: Request):
                 await asyncio.sleep(0.05)
 
         finally:
-            # Mark reference as None in memory + redis
             sd = get_session_data(session_id)
             if sd and "process" in sd:
                 sd["process"] = None
@@ -397,14 +395,15 @@ async def start_and_stream(payload: dict, request: Request):
 @app.get("/vnc/{session_id}")
 def get_vnc(session_id: str, request: Request):
     """
-    Returns a noVNC HTML client for the ephemeral port assigned to the container.
+    Returns a noVNC HTML client that connects directly to the container's
+    original host VM (via the 'host_public_ip' we stored) and noVNC port.
     """
     user_ip = request.headers.get("x-forwarded-for", request.client.host)
     session_data = get_session_data(session_id)
     if not session_data:
         return Response(content="Session not found or expired.", media_type="text/html")
 
-    # Optional: Enforce the IP match if you want strict per-IP usage
+    # Optional: Enforce IP ownership
     # if session_data["user_ip"] != user_ip:
     #     return Response("Session does not belong to your IP.", media_type="text/html")
 
@@ -412,20 +411,12 @@ def get_vnc(session_id: str, request: Request):
     session_data["last_active"] = time.time()
     set_session_data(session_id, session_data)
 
-    # Reload container to confirm ports
-    container_id = session_data["container_id"]
-    try:
-        container = docker_client.containers.get(container_id)
-        container.reload()
-    except:
-        return Response(content="Container no longer running.", media_type="text/html")
-
-    ports_info = container.attrs["NetworkSettings"]["Ports"]
-    no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
-    vnc_host = get_instance_public_ip()  # Setting to instance IP
+    # Instead of local Docker calls, we rely on Redis for the container's actual host & port
+    no_vnc_port_mapping = session_data["no_vnc_port"]
+    vnc_host = session_data["host_public_ip"]  # The actual VM that runs the container
     vnc_password = os.getenv("VNC_PASSWORD", "12345678")
 
-    # Construct the HTML
+    # Construct the HTML that points noVNC at the original VM
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
