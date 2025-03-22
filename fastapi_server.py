@@ -5,6 +5,7 @@ import uuid
 import asyncio
 import requests
 import subprocess
+import signal
 
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -123,73 +124,58 @@ async def cleanup_inactive_sessions():
 ###########################
 @app.post("/start")
 async def start_and_stream(payload: dict, request: Request):
-    """
-    1) Check if there's an existing container for this IP still within TIMEOUT.
-       - If yes, REUSE that container.
-       - Otherwise, spin up a new one.
-    2) Start browsing_agent.py as a subprocess referencing the container's CDP URL.
-    3) Stream browsing_agent.py output in real-time (SSE).
-    4) Do NOT remove container on finish. Instead, rely on the 5-min inactivity cleanup.
-    """
-
     user_ip = request.headers.get("x-forwarded-for", request.client.host)
     print(f"Incoming /start from IP: {user_ip}")
 
-    # 1) Check for existing active session
     existing_session_id = IP_SESSIONS.get(user_ip)
     session_id = None
     container = None
     reuse = False
 
     if existing_session_id:
-        # See if it's still in SESSIONS
         existing_data = SESSIONS.get(existing_session_id)
         if existing_data:
             elapsed = time.time() - existing_data["last_active"]
             if elapsed < TIMEOUT:
-                # Great, reuse this container
                 reuse = True
-                container = docker_client.containers.get(existing_data["container_id"])
+                container_id = existing_data["container_id"]
+                container = docker_client.containers.get(container_id)
                 session_id = existing_session_id
-                # Update last_active
                 existing_data["last_active"] = time.time()
                 print(f"Reusing container {container.name} for IP {user_ip}")
             else:
-                # It's stale; remove from memory and kill container
+                # stale; remove from memory and kill container
                 try:
-                    container = docker_client.containers.get(
-                        existing_data["container_id"]
-                    )
+                    container_id = existing_data["container_id"]
+                    container = docker_client.containers.get(container_id)
                     container.stop()
                     container.remove(force=True)
                 except:
                     pass
-                # Remove from session tracking
                 SESSIONS.pop(existing_session_id, None)
                 IP_SESSIONS.pop(user_ip, None)
 
-    # If no reuse, spin up a new container
     if not reuse:
+        # Spin up a new container
         session_id = str(uuid.uuid4())
         container_name = f"chrome_instance_{session_id}"
-
         print(f"Starting container: {container_name}")
+
         container = docker_client.containers.run(
             "abhipi04/custom-chrome-novnc",
             detach=True,
             name=container_name,
             ports={
-                "5900/tcp": None,  # VNC
-                "9333/tcp": None,  # CDP
-                "6080/tcp": None,  # noVNC
+                "5900/tcp": None,
+                "9333/tcp": None,
+                "6080/tcp": None,
             },
             shm_size="2g",
         )
-        # Give the container a moment to spin up
+        # Wait for container to spin up
         time.sleep(2)
         container.reload()
 
-        # Retrieve ephemeral ports from container
         ports_info = container.attrs["NetworkSettings"]["Ports"]
         cdp_port_mapping = ports_info["9333/tcp"][0]["HostPort"]
         no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
@@ -203,19 +189,16 @@ async def start_and_stream(payload: dict, request: Request):
             "no_vnc_port": no_vnc_port_mapping,
             "vnc_port": vnc_port_mapping,
             "user_ip": user_ip,
-            "process": None,  # We'll store the subprocess handle here
+            "process": None,
         }
         IP_SESSIONS[user_ip] = session_id
     else:
-        # We have a session_id and container from reuse
-        # We'll re-load ephemeral ports from container
         container.reload()
         ports_info = container.attrs["NetworkSettings"]["Ports"]
         cdp_port_mapping = ports_info["9333/tcp"][0]["HostPort"]
         no_vnc_port_mapping = ports_info["6080/tcp"][0]["HostPort"]
         vnc_port_mapping = ports_info["5900/tcp"][0]["HostPort"]
 
-        # Update session dictionary, just in case
         SESSIONS[session_id].update(
             {
                 "last_active": time.time(),
@@ -225,24 +208,22 @@ async def start_and_stream(payload: dict, request: Request):
             }
         )
 
-    # 2) Construct the CDP URL & pass to the agent
+    # Construct CDP URL
     host_for_cdp = "localhost"
     cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"
     payload["cdp_url"] = cdp_url
 
-    # If there's an existing process, we can either kill it or let it keep running.
-    # For simplicity, let's kill any old process if it's still around, then start a new one.
+    # Kill any old running process for this session
     old_proc = SESSIONS[session_id].get("process")
     if old_proc and old_proc.poll() is None:
-        # process is still running; let's kill it
         print(f"Killing old agent process for session {session_id}")
-        old_proc.terminate()
+        # Force kill instantly (Unix!)
         try:
-            old_proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            old_proc.kill()
+            os.killpg(os.getpgid(old_proc.pid), signal.SIGKILL)
+        except Exception as e:
+            print(f"Error killing old process group: {e}")
 
-    # 3) Start browsing_agent.py as subprocess
+    # Start new subprocess in its own process group
     payload_str = json.dumps(payload, separators=(",", ":"))
     process = subprocess.Popen(
         [
@@ -258,25 +239,24 @@ async def start_and_stream(payload: dict, request: Request):
         text=True,
         bufsize=1,
         universal_newlines=True,
+        # Ensure a new process group on Unix:
+        preexec_fn=os.setsid,
+        # Or for Python 3.9+, you can use:
+        # start_new_session=True,
     )
-    # Store the new process in session
     SESSIONS[session_id]["process"] = process
 
-    # 4) The streaming generator
     async def stream_generator():
         yield f"data: Session started with ID: {session_id}. Container: {container.name}\n\n"
         yield f"data: cdp_url: {cdp_url}\n\n"
-
         start_time = time.time()
 
         try:
             while True:
                 elapsed = time.time() - start_time
-
-                # Update last_active so the session doesn't get cleaned up
                 SESSIONS[session_id]["last_active"] = time.time()
 
-                # Read from stdout / stderr concurrently
+                # Read from stdout/stderr concurrently
                 stdout_task = asyncio.create_task(
                     asyncio.to_thread(process.stdout.readline)
                 )
@@ -290,48 +270,41 @@ async def start_and_stream(payload: dict, request: Request):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # Handle any completed tasks
                 for task in done:
                     line = task.result().rstrip("\n")
                     if line:
                         yield f"data: {line}\n\n"
 
-                # Cancel any pending tasks
+                # Cancel pending tasks
                 for task in pending:
                     task.cancel()
 
-                # Check if we've exceeded the subprocess time limit
+                # Subprocess time limit
                 if elapsed > TIMEOUT:
-                    yield f"data: Subprocess timed out after {TIMEOUT}s.\n\n"
-                    process.terminate()
+                    yield f"data: Subprocess timed out after {TIMEOUT}s. Killing!\n\n"
                     try:
-                        process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
+                        # Force kill instantly
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except Exception as e:
+                        yield f"data: Error forcibly killing agent: {e}\n\n"
+
                     yield "event: close\ndata: end\n\n"
                     return
 
-                # Check if process finished
+                # If process finished on its own
                 if process.poll() is not None:
                     yield "data: Subprocess finished.\n\n"
                     yield "event: close\ndata: end\n\n"
                     return
 
-                # Avoid busy loop
                 await asyncio.sleep(0.05)
 
         finally:
-            # Mark the process reference as None
+            # Mark reference as None
             if SESSIONS.get(session_id):
                 SESSIONS[session_id]["process"] = None
             print(f"Agent process ended for session {session_id}")
 
-    # 5) Return the SSE streaming response
-    # Custom cookie returned to use by the ALB
-    # headers = {
-    #     "Set-Cookie": f"SessionStickiness={session_id}; Path=/; Secure; SameSite=None; HttpOnly"
-    # }
-    # Headers removed (TEST)
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
 
