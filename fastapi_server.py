@@ -229,23 +229,14 @@ async def start_and_stream(payload: dict, request: Request):
     # Start new subprocess in its own process group
     payload_str = json.dumps(payload, separators=(",", ":"))
     process = subprocess.Popen(
-        [
-            "pipenv",
-            "run",
-            "python",
-            "-u",
-            "browsing_agent.py",
-            payload_str,
-        ],
+        ["bash", "-c", f"pipenv run python -u browsing_agent.py '{payload_str}'"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
         universal_newlines=True,
-        # Ensure a new process group on Unix:
         preexec_fn=os.setsid,
-        # Or for Python 3.9+, you can use:
-        # start_new_session=True,
+        cwd="/home/ubuntu/l2_cuak",
     )
     SESSIONS[session_id]["process"] = process
 
