@@ -227,9 +227,10 @@ async def start_and_stream(payload: dict, request: Request):
             print(f"Error killing old process group: {e}")
 
     # Start new subprocess in its own process group
+    # Start new subprocess in its own process group
     payload_str = json.dumps(payload, separators=(",", ":"))
     process = subprocess.Popen(
-        ["bash", "-c", f"pipenv run python -u browsing_agent.py '{payload_str}'"],
+        ["python", "-u", "browsing_agent.py", payload_str],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
