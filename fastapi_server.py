@@ -212,7 +212,7 @@ async def start_and_stream(payload: dict, request: Request):
         )
 
     # Construct CDP URL
-    host_for_cdp = "localhost"
+    host_for_cdp = get_instance_public_hostname()  # Change to localhost if needed
     cdp_url = f"http://{host_for_cdp}:{cdp_port_mapping}"
     payload["cdp_url"] = cdp_url
 
