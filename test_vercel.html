@@ -61,7 +61,7 @@ document.getElementById('taskForm').addEventListener('submit', async e => {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         protocol: 'data',
-        task: document.getElementById('task').value,
+        query: document.getElementById('task').value,
         user_context: ''
       })
     });
